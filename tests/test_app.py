@@ -336,6 +336,28 @@ class AiTests(unittest.TestCase):
         self.assertIn("clear English", prompt_en)
         self.assertIn('"what_to_watch_next": array of 2-4 strings', prompt_en)
 
+    def test_language_guard_checks_every_section_not_only_combined_ratio(self):
+        tamil = {
+            "current_conditions_and_forecast": "நாளை மழை பெய்ய வாய்ப்புள்ளது.",
+            "historical_context": "சமீபத்திய மழைப்பொழிவு சராசரியை விட அதிகமாக இருந்தது.",
+            "what_to_watch_next": ["நாளைய முன்னறிவிப்பைச் சரிபார்க்கவும்."],
+            "recommended_actions": ["அதிகாரப்பூர்வ வானிலை அறிவிப்புகளைப் பார்க்கவும்."],
+            "confidence_and_limitations": "இவை மாதிரி மதிப்பீடுகள்.",
+        }
+        self.assertFalse(ai._answer_language_mismatch(tamil, "ta"))
+        mixed = dict(tamil)
+        mixed["historical_context"] = "Recent rainfall was above average and may continue."
+        self.assertTrue(ai._answer_language_mismatch(mixed, "ta"))
+        self.assertTrue(ai._answer_language_mismatch(tamil, "en"))
+        english = {
+            "current_conditions_and_forecast": "Rain is possible tomorrow in Chennai.",
+            "historical_context": "Recent rainfall was above average.",
+            "what_to_watch_next": ["Check the updated forecast tomorrow."],
+            "recommended_actions": ["Follow official weather bulletins."],
+            "confidence_and_limitations": "These are model estimates.",
+        }
+        self.assertFalse(ai._answer_language_mismatch(english, "en"))
+
     def test_tamil_selection_retries_an_english_answer_and_returns_tamil(self):
         english = {
             "current_conditions_and_forecast": "Chennai has a chance of rain tomorrow.",
