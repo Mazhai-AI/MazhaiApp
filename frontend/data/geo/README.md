@@ -7,7 +7,7 @@ This GeoJSON is derived from [Chennai/Wards.geojson in DataMeet's Municipal Spat
 The Chennai-specific [source README](https://github.com/datameet/Municipal_Spatial_Data/blob/master/Chennai/Readme.md) says the data was received from the [Transparent Chennai](http://www.transparentchennai.com/) team and identifies it as electoral wards for Chennai city. That Chennai-specific notice licenses the dataset under **Creative Commons Attribution-ShareAlike 2.5 India (CC BY-SA 2.5 India)**. This explicit Chennai-specific notice is the license used here.
 
 - **Required attribution:** Chennai ward boundaries by the Transparent Chennai team, shared via DataMeet Municipal Spatial Data.
-- **License:** [CC BY-SA 2.5 India](https://creativecommons.org/licenses/by-sa/2.5/in/).
+- **License:** The derived GeoJSON in this folder is distributed under the same [CC BY-SA 2.5 India](https://creativecommons.org/licenses/by-sa/2.5/in/) license.
 - **Source file SHA:** `d9f04c3657e787ba61983e45454c089a2fa51a51` (source repository's `master` at the time this asset was imported).
 - **Official reference:** [Greater Chennai Corporation ward maps and notifications](https://chennaicorporation.gov.in/gcc/delimited_ward/). The corporation advises users to refer to the Gazette notification where discrepancies arise.
 
