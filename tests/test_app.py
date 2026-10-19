@@ -131,6 +131,16 @@ class BackendTests(unittest.TestCase):
         r = self.client.post("/api/ai/ask", json={"question": "will it rain?"}).json()
         self.assertFalse(r["available"])
 
+    def test_ai_request_accepts_tamil_language(self):
+        response = self.client.post("/api/ai/ask", json={
+            "question": "Forecast for Chennai?",
+            "district_id": "chennai",
+            "language": "ta",
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertFalse(response.json()["available"])  # No live Mistral key is required for this test.
+
+
     def test_oversized_chat_history_is_trimmed_instead_of_rejected(self):
         long_answer = "Historical rainfall and forecast context. " * 80
         r = self.client.post("/api/ai/ask", json={
@@ -266,6 +276,20 @@ class AiTests(unittest.TestCase):
         self.assertEqual(result["structured_answer"]["historical_context"], payload["historical_context"])
         self.assertEqual(self.sent["response_format"], {"type": "json_object"})
         self.assertIn("## Historical context", result["answer"])
+
+    def test_tamil_language_instruction_is_sent_to_mistral(self):
+        payload = {
+            "current_conditions_and_forecast": "சென்னையில் மழை பெய்ய வாய்ப்புள்ளது.",
+            "historical_context": "சமீபத்திய தரவு மழைப்பொழிவைக் காட்டுகிறது.",
+            "what_to_watch_next": ["முன்னறிவிப்பைப் புதுப்பித்துப் பார்க்கவும்."],
+            "recommended_actions": ["அதிகாரப்பூர்வ எச்சரிக்கைகளைப் பின்பற்றவும்."],
+            "confidence_and_limitations": "இது மாதிரித் தரவு; அதிகாரப்பூர்வ எச்சரிக்கை அல்ல.",
+        }
+        ai.urlopen = self._fake(json.dumps(payload, ensure_ascii=False))
+        result = ai.ask_mistral("சென்னையில் மழை நிலை என்ன?", district_id=None, language="ta")
+        self.assertTrue(result["available"])
+        self.assertIn("Respond entirely in natural Tamil (தமிழ்)", self.sent["messages"][0]["content"])
+        self.assertEqual(result["structured_answer"]["historical_context"], payload["historical_context"])
 
     def test_unsupported_city_does_not_fall_back_to_selected_tamil_nadu_district(self):
         self.assertIsNone(ai._resolve_district("Will it rain in Bengaluru?", "chennai"))
