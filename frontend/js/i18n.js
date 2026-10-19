@@ -278,6 +278,9 @@ export function t(english) {
 }
 
 function translatePhrase(value, language) {
+  if (value.includes(" → ")) {
+    return value.split(" → ").map(part => translatePhrase(part.trim(), language)).join(" → ");
+  }
   if (language === "en") return EN[value] || value;
   if (TA[value]) return TA[value];
   let match = value.match(/^(\d+)-day provider precipitation sum$/);
@@ -302,6 +305,16 @@ function translatePhrase(value, language) {
   if (match) return match[2] + " முன்னறிவிப்பு நாட்களில் " + match[1] + " நாட்களில் குறைந்தது 1 மிமீ மழை எதிர்பார்க்கப்படுகிறது. அதிகபட்ச தினசரி அளவு " + match[3] + " மிமீ (" + match[4] + ").";
   match = value.match(/^([^·]+) · current$/);
   if (match) return translatePhrase(match[1].trim(), language) + " · தற்போதைய நிலை";
+  match = value.match(/^(\\d+)\\/38 districts returned values\\.\\s*(.*)$/);
+  if (match) return "38 மாவட்டங்களில் " + match[1] + " மாவட்டங்களுக்கு மதிப்புகள் கிடைத்தன." + (match[2] ? " " + match[2] : "");
+  match = value.match(/^Historical data unavailable: (.+)$/);
+  if (match) return "வரலாற்றுத் தரவு கிடைக்கவில்லை: " + match[1];
+  match = value.match(/^Weather could not be loaded: (.+)$/);
+  if (match) return "வானிலைத் தரவை ஏற்ற முடியவில்லை: " + match[1];
+  match = value.match(/^State boundary data could not be loaded\\. The basemap and Tamil Nadu district markers remain available\\. \\((.+)\\)$/);
+  if (match) return "மாநில எல்லைத் தரவை ஏற்ற முடியவில்லை. அடிப்படை வரைபடமும் தமிழ்நாடு மாவட்டக் குறியீடுகளும் கிடைக்கும். (" + match[1] + ")";
+  match = value.match(/^Connected · (.+)$/);
+  if (match) return "இணைக்கப்பட்டது · " + match[1];
   match = value.match(/^Cannot connect to Mazhai AI API: (.+)$/);
   if (match) return "மழை AI API-ஐ இணைக்க முடியவில்லை: " + match[1];
   return value;
