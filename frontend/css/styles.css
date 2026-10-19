@@ -33,3 +33,9 @@
 .ai-alert-high-attention{background:#2b191e;border-color:#85414b}
 .ai-alert-high-attention .ai-alert-title{color:#ff9aa4}
 .ai-alert-unable-to-assess{background:#141f2b;border-color:#3a4b5c}
+
+.chat-bubble .assistant-answer-section{white-space:normal;overflow-wrap:anywhere}
+.chat-bubble .assistant-answer-section h4{font:700 12px var(--display);letter-spacing:.1px;color:#eaf8ff;margin:15px 0 7px;padding-bottom:5px;border-bottom:1px solid #294257}
+.chat-bubble .assistant-answer-section p{font-size:11px;line-height:1.6;white-space:normal;color:#c1d2df;margin:6px 0 10px}
+.chat-bubble .assistant-answer-section ul{padding-left:19px;margin:5px 0 11px}
+.chat-bubble .assistant-answer-section li{font-size:11px;line-height:1.6;white-space:normal;color:#c1d2df;margin:5px 0;padding-left:2px}
