@@ -331,7 +331,7 @@ class AiTests(unittest.TestCase):
 
         prompt_ta = ai._build_system_prompt(datetime(2026, 10, 20, 0, 0), "ta")
         prompt_en = ai._build_system_prompt(datetime(2026, 10, 20, 0, 0), "en")
-        self.assertIn("natural, clear everyday Tamil (தமிழ்)", prompt_ta)
+        self.assertIn("LANGUAGE LOCK: The selected response language is TAMIL (தமிழ்)", prompt_ta)
         self.assertIn("Keep field names in English", prompt_ta)
         self.assertIn("clear English", prompt_en)
         self.assertIn('"what_to_watch_next": array of 2-4 strings', prompt_en)
@@ -413,7 +413,7 @@ class AiTests(unittest.TestCase):
             return FakeResp({"choices": [{"message": {"content": queued.pop(0)}}]})
 
         ai.urlopen = sequenced
-        result = ai.ask_mistral("சென்னையில் நாளை மழை பெய்யுமா?", language="en")
+        result = ai.ask_mistral("மழை பெய்யுமா?", language="en")
         self.assertTrue(result["available"])
         self.assertEqual(result["language"], "en")
         self.assertTrue(result["language_retry_used"])
@@ -461,7 +461,7 @@ class AiTests(unittest.TestCase):
         ai.urlopen = self._fake(json.dumps(payload, ensure_ascii=False))
         result = ai.ask_mistral("மழை நிலை என்ன?", district_id=None, language="ta")
         self.assertTrue(result["available"])
-        self.assertIn("Write every user-facing value in natural, clear everyday Tamil (தமிழ்)", self.sent["messages"][0]["content"])
+        self.assertIn("LANGUAGE LOCK: The selected response language is TAMIL (தமிழ்)", self.sent["messages"][0]["content"])
         self.assertEqual(result["structured_answer"]["historical_context"], payload["historical_context"])
 
     def test_tamil_district_names_resolve_for_ai_questions(self):
