@@ -120,3 +120,6 @@ tests/                  Automated tests
 - For reliable scheduled ingestion and larger concurrent deployments, move refresh work into a background job and consider PostgreSQL.
 - Add verified district boundary GeoJSON before rendering choropleths; this version intentionally uses representative coordinate markers.
 - Check provider terms, attribution, licensing, rate limits, and model metadata before public/commercial deployment.
+
+## Site
+https://mazhaiapp.onrender.com/
