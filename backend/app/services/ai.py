@@ -343,19 +343,27 @@ def _parse_json_object(raw):
         repaired = _repair_unescaped_json_quotes(candidate)
         if repaired != candidate:
             attempts.append(repaired)
+        for attempt in list(attempts):
+            trailing_comma_fixed = re.sub(r",\\s*([}\\]])", r"\\1", attempt)
+            if trailing_comma_fixed not in attempts:
+                attempts.append(trailing_comma_fixed)
         for attempt in attempts:
-            try:
-                parsed = json.loads(attempt)
-            except (TypeError, json.JSONDecodeError):
-                continue
-            if isinstance(parsed, str):
+            for strict in (True, False):
                 try:
-                    parsed = json.loads(parsed.strip())
+                    parsed = json.loads(attempt, strict=strict)
                 except (TypeError, json.JSONDecodeError):
                     continue
-            if isinstance(parsed, dict):
-                return parsed
-    return None
+                if isinstance(parsed, str):
+                    try:
+                        parsed = json.loads(parsed.strip(), strict=False)
+                    except (TypeError, json.JSONDecodeError):
+                        continue
+                if isinstance(parsed, dict):
+                    return parsed
+
+    # A response can be truncated at the token limit or contain malformed quoting.
+    # Recover any complete schema fields rather than discarding an otherwise useful answer.
+    return _salvage_structured_json(text)
 
 
 def _repair_unescaped_json_quotes(candidate):
@@ -402,6 +410,127 @@ def _repair_unescaped_json_quotes(candidate):
         output.append(char)
         index += 1
     return "".join(output)
+
+
+def _decode_salvaged_json_string(value):
+    """Decode a recovered JSON string, repairing embedded quotes if possible."""
+    value = value.strip()
+    try:
+        return json.loads('"' + value + '"')
+    except (TypeError, json.JSONDecodeError):
+        wrapped = '{"value":"' + value + '"}'
+        repaired = _repair_unescaped_json_quotes(wrapped)
+        try:
+            return json.loads(repaired).get("value", value)
+        except (TypeError, json.JSONDecodeError):
+            return value.replace('\\"', '"').replace("\\n", " ").replace("\\r", " ")
+
+
+def _salvage_json_array(value):
+    """Recover complete string elements from a partly malformed/truncated JSON array."""
+    value = value.strip()
+    if not value.startswith("["):
+        return []
+    value = value[1:]
+    items = []
+    index = 0
+    while index < len(value) and len(items) < 6:
+        while index < len(value) and (value[index].isspace() or value[index] == ","):
+            index += 1
+        if index >= len(value) or value[index] == "]":
+            break
+        if value[index] != '"':
+            # Stop rather than guessing at an unquoted item or nested object.
+            break
+        index += 1
+        chars = []
+        escaped = False
+        while index < len(value):
+            char = value[index]
+            if escaped:
+                chars.append("\\\\" + char)
+                escaped = False
+                index += 1
+                continue
+            if char == "\\\\":
+                escaped = True
+                index += 1
+                continue
+            if char == '"':
+                look = index + 1
+                while look < len(value) and value[look].isspace():
+                    look += 1
+                following = value[look] if look < len(value) else ""
+                closes_item = following in ("", "]", "}")
+                if following == ",":
+                    after_comma = look + 1
+                    while after_comma < len(value) and value[after_comma].isspace():
+                        after_comma += 1
+                    closes_item = after_comma >= len(value) or value[after_comma] in ('"', "]", "}")
+                if closes_item:
+                    index += 1
+                    break
+                chars.append(char)
+                index += 1
+                continue
+            chars.append(char)
+            index += 1
+        item = _decode_salvaged_json_string("".join(chars)).strip()
+        if item:
+            items.append(item)
+        # Continue at the current cursor; it is either after an item quote or at end.
+    return items
+
+
+def _salvage_structured_json(raw):
+    """Recover fields from JSON-like output even when the full object will not parse."""
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    keys = (
+        "current_conditions_and_forecast",
+        "historical_context",
+        "what_to_watch_next",
+        "recommended_actions",
+        "confidence_and_limitations",
+    )
+    key_pattern = re.compile(r"""["']?(""" + "|".join(re.escape(key) for key in keys) + r""")["']?\s*:""")
+    matches = list(key_pattern.finditer(raw))
+    if not matches:
+        return None
+
+    recovered = {}
+    array_keys = {"what_to_watch_next", "recommended_actions"}
+    for i, match in enumerate(matches):
+        key = match.group(1)
+        start = match.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(raw)
+        segment = raw[start:end].strip()
+        if i + 1 < len(matches):
+            segment = re.sub(r",\s*$", "", segment).strip()
+        else:
+            # Remove the outer object brace, not a brace inside quoted prose.
+            segment = re.sub(r"}\s*$", "", segment).strip()
+
+        if key in array_keys:
+            values = _salvage_json_array(segment)
+            if values:
+                recovered[key] = values
+            continue
+
+        if not segment:
+            continue
+        # Trim the delimiter around a scalar string. The quote repair helper
+        # escapes quotes inside the field while preserving its outer delimiter.
+        if segment.startswith('"'):
+            segment = segment[1:]
+        segment = re.sub(r",\s*$", "", segment).strip()
+        if segment.endswith('"'):
+            segment = segment[:-1]
+        segment = segment.strip()
+        if segment:
+            recovered[key] = _decode_salvaged_json_string(segment)
+
+    return recovered if recovered else None
 
 
 def _normalize_structured_answer(raw):
