@@ -253,6 +253,13 @@ const TA = {
   "APP INDICATOR · NOT OFFICIAL": "பயன்பாட்டு குறியீடு · அதிகாரப்பூர்வமல்ல",
   "Preliminary forecast screening only. This is not an IMD warning or a flood prediction.": "முன்னறிவிப்பின் ஆரம்ப நிலைத் திரையிடல் மட்டுமே. இது IMD எச்சரிக்கையோ வெள்ள முன்னறிவிப்போ அல்ல.",
   "The available evidence could not determine an attention level.": "கிடைத்த ஆதாரங்களால் கவனநிலையைத் தீர்மானிக்க முடியவில்லை.",
+  "Checking connection…": "இணைப்பு சரிபார்க்கப்படுகிறது…",
+  "Built for Tamil Nadu": "தமிழ்நாட்டிற்காக உருவாக்கப்பட்டது",
+  "Dark": "இருண்ட தீம்",
+  "15 min cache": "15 நிமிடத் தேக்கம்",
+  "Data services": "தரவு சேவைகள்",
+  "Air temperature · Celsius": "காற்றின் வெப்பநிலை · செல்சியஸ்",
+  "Map notice": "வரைபட அறிவிப்பு",
   "API unavailable": "API கிடைக்கவில்லை"
 };
 
