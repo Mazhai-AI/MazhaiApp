@@ -1,3 +1,4 @@
+import { getLanguage, setLanguage, applyLanguage, initLanguagePreference, t } from "./i18n.js";
 const API = "/api";
 const $ = (selector, root=document) => root.querySelector(selector);
 const $$ = (selector, root=document) => [...root.querySelectorAll(selector)];
@@ -287,7 +288,7 @@ async function sendQuestion(question){
   const bubble=placeholder.querySelector(".chat-bubble");
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),70000);
   try{
-    const body={question:text,district_id:state.districtId,history:state.chatHistory.slice(-8).map(turn=>({role:turn.role,content:String(turn.content??"").slice(0,1400)}))};
+    const body={question:text,district_id:state.districtId,language:getLanguage(),history:state.chatHistory.slice(-8).map(turn=>({role:turn.role,content:String(turn.content??"").slice(0,1400)}))};
     const start=$("#history-start").value,end=$("#history-end").value;if(start&&end&&end>=start){body.start=start;body.end=end}
     const result=await api("/ai/ask",{method:"POST",body:JSON.stringify(body),signal:controller.signal});
     const reply=result.available?result.answer:result.message;
@@ -320,7 +321,7 @@ function wireEvents(){
   $("#chat-form").addEventListener("submit",e=>{e.preventDefault();sendQuestion()});
   $$(".suggested-questions button").forEach(b=>b.addEventListener("click",()=>sendQuestion(b.dataset.question)));
   $("#mobile-menu").addEventListener("click",()=>$("#sidebar").classList.toggle("open"));
-  $("#save-settings").addEventListener("click",()=>{selectDistrict($("#default-district").value);$("#settings-saved").textContent="Preferences saved in this browser.";toast("Preferences saved.");});
+  $("#save-settings").addEventListener("click",()=>{setLanguage($("#language-select").value);applyLanguage(getLanguage());$("#language-select").value=getLanguage();selectDistrict($("#default-district").value);$("#settings-saved").textContent=t("Preferences saved in this browser.");toast(t("Preferences saved."));});
 }
 async function refreshCurrent(force=false){
   try{
@@ -332,7 +333,9 @@ async function refreshCurrent(force=false){
   }catch(e){toast(e.message)}
 }
 async function init(){
-  $("#today-label").textContent=today.toLocaleDateString("en-IN",{weekday:"short",day:"numeric",month:"short",year:"numeric"});
+  $("#language-select").value=getLanguage();
+  initLanguagePreference();
+  $("#today-label").textContent=today.toLocaleDateString(getLanguage()==="ta"?"ta-IN":"en-IN",{weekday:"short",day:"numeric",month:"short",year:"numeric"});
   $("#history-start").value=daysAgo(29);$("#history-end").value=dateISO(today);
   $("#analytics-start").value=daysAgo(29);$("#analytics-end").value=dateISO(today);
   wireEvents();
