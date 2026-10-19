@@ -332,14 +332,14 @@ function translatePhrase(value, language) {
   match = value.match(/^The highest daily forecast is ([\d.]+) mm on (.+)\.$/);
   if (match) return "அதிகபட்ச தினசரி மழை முன்னறிவிப்பு " + match[2] + " அன்று " + match[1] + " மிமீ.";
   match = value.match(/^Rainfall probability peaks at ([\d.]+)% and the available forecast indicates some rainfall\.$/);
-  if (match) return "மழை பெய்யும் நிகழ்தகவு அதிகபட்சம் " + match[1] +%. கிடைத்த முன்னறிவிப்பில் மழை சாத்தியம் உள்ளது.";
+  if (match) return "மழை பெய்யும் நிகழ்தகவு அதிகபட்சம் " + match[1] + "%. கிடைத்த முன்னறிவிப்பில் மழை சாத்தியம் உள்ளது.";
   match = value.match(/^The available forecast amounts are below the app's Watch threshold\.$/);
   if (match) return "கிடைத்த முன்னறிவிப்பு அளவுகள் பயன்பாட்டின் கண்காணிப்பு வரம்புக்குக் கீழே உள்ளன.";
   match = value.match(/^Connected · (.+)$/);
   if (match) return "இணைக்கப்பட்டது · " + match[1];
   match = value.match(/^Cannot connect to Mazhai AI API: (.+)$/);
   if (match) return "மழை AI API-ஐ இணைக்க முடியவில்லை: " + match[1];
-  const sentences = value.split(/(?<=\\.)\\s+(?=[A-Z])/);
+  const sentences = value.split(/(?<=\.)\s+(?=[A-Z])/);
   if (sentences.length > 1) {
     const translated = sentences.map(sentence => translatePhrase(sentence, language)).join(" ");
     if (translated !== value) return translated;
