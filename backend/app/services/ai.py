@@ -470,8 +470,10 @@ def _answer_language_mismatch(answer, language):
         return True
 
     checked = 0
+    all_letters = []
     for value in values:
         letters = [char for char in value if char.isalpha()]
+        all_letters.extend(letters)
         if len(letters) < 5:
             # Very short labels/acronyms are not meaningful language samples.
             continue
@@ -484,7 +486,11 @@ def _answer_language_mismatch(answer, language):
                 return True
         elif tamil >= 5 and ratio >= 0.20:
             return True
-    return checked == 0
+    if checked == 0:
+        tamil_all = sum(0x0B80 <= ord(char) <= 0x0BFF for char in all_letters)
+        # Tiny but clearly wrong-language text such as "ok" should still trigger a Tamil retry.
+        return tamil_all < len(all_letters) if language == "ta" else tamil_all > 0
+    return False
 
 
 
