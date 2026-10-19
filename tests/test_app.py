@@ -313,6 +313,29 @@ class AiTests(unittest.TestCase):
         self.assertIn("could not be formatted", markdown)
         self.assertFalse(markdown.lstrip().startswith("{"))
 
+    def test_reliable_prompt_prioritizes_follow_up_intent_and_evidence(self):
+        from datetime import datetime
+
+        prompt = ai._build_system_prompt(datetime(2026, 10, 20, 0, 0), "en")
+        self.assertIn("The latest user message determines the task", prompt)
+        self.assertIn("Use chat history only to understand conversational context", prompt)
+        self.assertIn("Never treat a previous assistant answer as evidence", prompt)
+        self.assertIn("Do not repeat a full general report when the user asks a narrow follow-up", prompt)
+        self.assertIn("Never invent rainfall measurements", prompt)
+        self.assertIn("District reference-point data cannot establish a specific ward", prompt)
+        self.assertIn("Return exactly one valid JSON object", prompt)
+        self.assertIn("do not restate every number", prompt)
+
+    def test_reliable_prompt_has_consistent_tamil_and_english_contracts(self):
+        from datetime import datetime
+
+        prompt_ta = ai._build_system_prompt(datetime(2026, 10, 20, 0, 0), "ta")
+        prompt_en = ai._build_system_prompt(datetime(2026, 10, 20, 0, 0), "en")
+        self.assertIn("natural, clear everyday Tamil (தமிழ்)", prompt_ta)
+        self.assertIn("Keep field names in English", prompt_ta)
+        self.assertIn("clear English", prompt_en)
+        self.assertIn('"what_to_watch_next": array of 2-4 strings', prompt_en)
+
     def test_tamil_language_instruction_is_sent_to_mistral(self):
         payload = {
             "current_conditions_and_forecast": "சென்னையில் மழை பெய்ய வாய்ப்புள்ளது.",
