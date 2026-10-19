@@ -50,6 +50,7 @@ class ChatTurn(BaseModel):
 class AskRequest(BaseModel):
     question: str = Field(min_length=3, max_length=1200)
     district_id: str | None = None
+    language: Literal["en", "ta"] = "en"
     start: str | None = None
     end: str | None = None
     history: list[ChatTurn] = Field(default_factory=list, max_length=12)
@@ -136,7 +137,7 @@ def ai_ask(body: AskRequest, request: Request):
                 raise HTTPException(400, "End date must be on or after start date.")
         except ValueError:
             raise HTTPException(400, "Dates must use YYYY-MM-DD format")
-    return ask_mistral(body.question.strip(), district_id, body.start, body.end, [t.model_dump() for t in body.history])
+    return ask_mistral(body.question.strip(), district_id, body.start, body.end, [t.model_dump() for t in body.history], language=body.language)
 
 @app.get("/api/analytics/district-comparison")
 def comparison(start: str = Query(...), end: str = Query(...)):
