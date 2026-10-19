@@ -262,6 +262,62 @@ class AiTests(unittest.TestCase):
         self.assertIn("JSON object", self.sent["messages"][0]["content"])
 
 
+    def test_truncated_json_recovers_completed_fields(self):
+        raw = (
+            '{"current_conditions_and_forecast":"Forecast indicates 24.2 mm tomorrow.",'
+            '"historical_context":"Recent rainfall was above average.",'
+            '"what_to_watch_next":["Check the forecast tomorrow", "Watch for updated rainfall'
+        )
+        answer = ai._normalize_structured_answer(raw)
+        self.assertIsNotNone(answer)
+        self.assertTrue(answer["_parse_error"])
+        self.assertIn("24.2 mm tomorrow", answer["current_conditions_and_forecast"])
+        self.assertIn("above average", answer["historical_context"])
+        self.assertIn("Check the forecast tomorrow", answer["what_to_watch_next"])
+        self.assertNotIn("could not be formatted", answer["current_conditions_and_forecast"])
+
+    def test_malformed_json_triggers_format_retry_before_fallback(self):
+        truncated = (
+            '{"current_conditions_and_forecast":"Incomplete old answer",'
+            '"historical_context":"Partial history",'
+            '"what_to_watch_next":["Partial watch item'
+        )
+        complete = {
+            "current_conditions_and_forecast": "The updated forecast indicates rain may occur tomorrow.",
+            "historical_context": "Recent historical rainfall was above average.",
+            "what_to_watch_next": ["Check the next forecast update.", "Watch official bulletins."],
+            "recommended_actions": ["Follow official weather advisories."],
+            "confidence_and_limitations": "These are model estimates, not local rain-gauge observations.",
+        }
+        queued = [truncated, json.dumps(complete)]
+        requests = []
+
+        def sequenced(req, timeout=None):
+            requests.append(json.loads(req.data.decode()))
+            return FakeResp({"choices": [{"message": {"content": queued.pop(0)}}]})
+
+        ai.urlopen = sequenced
+        result = ai.ask_mistral("What should I watch next?", language="en")
+        self.assertTrue(result["available"])
+        self.assertTrue(result["format_retry_used"])
+        self.assertEqual(len(requests), 2)
+        self.assertIn("FORMAT CHECK FAILED", requests[1]["messages"][-1]["content"])
+        self.assertEqual(result["structured_answer"]["current_conditions_and_forecast"], complete["current_conditions_and_forecast"])
+        self.assertNotIn("could not be formatted", result["answer"])
+
+    def test_salvaged_array_keeps_quotes_inside_its_items(self):
+        raw = (
+            '{"current_conditions_and_forecast":"Forecast says "24.2 mm" tomorrow.",'
+            '"historical_context":"Recent rainfall was above average.",'
+            '"what_to_watch_next":["Monitor the "24.2 mm" daily estimate.", "Check the next update."],'
+            '"recommended_actions":["Follow official advisories."],'
+            '"confidence_and_limitations":"Model estimates only."}'
+        )
+        answer = ai._normalize_structured_answer(raw)
+        self.assertIsNotNone(answer)
+        self.assertIn("24.2 mm", answer["current_conditions_and_forecast"])
+        self.assertTrue(any("daily estimate" in item for item in answer["what_to_watch_next"]))
+
     def test_structured_json_response_returns_normalized_fields(self):
         payload = {
             "current_conditions_and_forecast": "Chennai has a forecasted rain window.",
@@ -310,7 +366,8 @@ class AiTests(unittest.TestCase):
         structured = ai._normalize_structured_answer(raw)
         self.assertIsNotNone(structured)
         markdown = ai._structured_answer_markdown(structured)
-        self.assertIn("could not be formatted", markdown)
+        self.assertTrue(structured["_parse_error"])
+        self.assertIn("partial response", markdown)
         self.assertFalse(markdown.lstrip().startswith("{"))
 
     def test_reliable_prompt_prioritizes_follow_up_intent_and_evidence(self):

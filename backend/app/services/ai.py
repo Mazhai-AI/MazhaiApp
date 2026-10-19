@@ -343,19 +343,30 @@ def _parse_json_object(raw):
         repaired = _repair_unescaped_json_quotes(candidate)
         if repaired != candidate:
             attempts.append(repaired)
+        for attempt in list(attempts):
+            trailing_comma_fixed = re.sub(r",\\s*([}\\]])", r"\\1", attempt)
+            if trailing_comma_fixed not in attempts:
+                attempts.append(trailing_comma_fixed)
         for attempt in attempts:
-            try:
-                parsed = json.loads(attempt)
-            except (TypeError, json.JSONDecodeError):
-                continue
-            if isinstance(parsed, str):
+            for strict in (True, False):
                 try:
-                    parsed = json.loads(parsed.strip())
+                    parsed = json.loads(attempt, strict=strict)
                 except (TypeError, json.JSONDecodeError):
                     continue
-            if isinstance(parsed, dict):
-                return parsed
-    return None
+                if isinstance(parsed, str):
+                    try:
+                        parsed = json.loads(parsed.strip(), strict=False)
+                    except (TypeError, json.JSONDecodeError):
+                        continue
+                if isinstance(parsed, dict):
+                    return parsed
+
+    # A response can be truncated at the token limit or contain malformed quoting.
+    # Recover any complete schema fields rather than discarding an otherwise useful answer.
+    salvaged = _salvage_structured_json(text)
+    if salvaged:
+        salvaged["_parse_error"] = True
+    return salvaged
 
 
 def _repair_unescaped_json_quotes(candidate):
@@ -404,10 +415,134 @@ def _repair_unescaped_json_quotes(candidate):
     return "".join(output)
 
 
+def _decode_salvaged_json_string(value):
+    """Decode a recovered JSON string, repairing embedded quotes if possible."""
+    value = value.strip()
+    try:
+        return json.loads('"' + value + '"')
+    except (TypeError, json.JSONDecodeError):
+        wrapped = '{"value":"' + value + '"}'
+        repaired = _repair_unescaped_json_quotes(wrapped)
+        try:
+            return json.loads(repaired).get("value", value)
+        except (TypeError, json.JSONDecodeError):
+            return value.replace('\\"', '"').replace("\\n", " ").replace("\\r", " ")
+
+
+def _salvage_json_array(value):
+    """Recover complete string elements from a partly malformed/truncated JSON array."""
+    value = value.strip()
+    if not value.startswith("["):
+        return []
+    value = value[1:]
+    items = []
+    index = 0
+    while index < len(value) and len(items) < 6:
+        while index < len(value) and (value[index].isspace() or value[index] == ","):
+            index += 1
+        if index >= len(value) or value[index] == "]":
+            break
+        if value[index] != '"':
+            # Stop rather than guessing at an unquoted item or nested object.
+            break
+        index += 1
+        chars = []
+        escaped = False
+        while index < len(value):
+            char = value[index]
+            if escaped:
+                chars.append("\\\\" + char)
+                escaped = False
+                index += 1
+                continue
+            if char == "\\\\":
+                escaped = True
+                index += 1
+                continue
+            if char == '"':
+                look = index + 1
+                while look < len(value) and value[look].isspace():
+                    look += 1
+                following = value[look] if look < len(value) else ""
+                closes_item = following in ("", "]", "}")
+                if following == ",":
+                    after_comma = look + 1
+                    while after_comma < len(value) and value[after_comma].isspace():
+                        after_comma += 1
+                    closes_item = after_comma >= len(value) or value[after_comma] in ('"', "]", "}")
+                if closes_item:
+                    index += 1
+                    break
+                chars.append(char)
+                index += 1
+                continue
+            chars.append(char)
+            index += 1
+        item = _decode_salvaged_json_string("".join(chars)).strip()
+        if item:
+            items.append(item)
+        # Continue at the current cursor; it is either after an item quote or at end.
+    return items
+
+
+def _salvage_structured_json(raw):
+    """Recover fields from JSON-like output even when the full object will not parse."""
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    keys = (
+        "current_conditions_and_forecast",
+        "historical_context",
+        "what_to_watch_next",
+        "recommended_actions",
+        "confidence_and_limitations",
+    )
+    key_pattern = re.compile(r"""["']?(""" + "|".join(re.escape(key) for key in keys) + r""")["']?\s*:""")
+    matches = list(key_pattern.finditer(raw))
+    if not matches:
+        return None
+
+    recovered = {}
+    array_keys = {"what_to_watch_next", "recommended_actions"}
+    for i, match in enumerate(matches):
+        key = match.group(1)
+        start = match.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(raw)
+        segment = raw[start:end].strip()
+        if i + 1 < len(matches):
+            segment = re.sub(r",\s*$", "", segment).strip()
+        else:
+            # Remove the outer object brace, not a brace inside quoted prose.
+            segment = re.sub(r"}\s*$", "", segment).strip()
+
+        if key in array_keys:
+            values = _salvage_json_array(segment)
+            if values:
+                recovered[key] = values
+            continue
+
+        if not segment:
+            continue
+        # Trim the delimiter around a scalar string. The quote repair helper
+        # escapes quotes inside the field while preserving its outer delimiter.
+        if segment.startswith('"'):
+            segment = segment[1:]
+        segment = re.sub(r",\s*$", "", segment).strip()
+        if segment.endswith('"'):
+            segment = segment[:-1]
+        segment = segment.strip()
+        if segment:
+            recovered[key] = _decode_salvaged_json_string(segment)
+
+    return recovered if recovered else None
+
+
 def _normalize_structured_answer(raw):
-    """Validate model JSON and prevent JSON-like output leaking into the chat UI."""
+    """Validate model JSON, recover fields, and flag output that needs a format retry."""
     parsed = _parse_json_object(raw)
-    if not isinstance(parsed, dict):
+    parse_error = False
+    if isinstance(parsed, dict):
+        parse_error = bool(parsed.pop("_parse_error", False))
+    else:
         looks_structured = isinstance(raw, str) and (
             raw.lstrip().startswith("{")
             or "current_conditions_and_forecast" in raw
@@ -415,6 +550,7 @@ def _normalize_structured_answer(raw):
         )
         if not looks_structured:
             return None
+        parse_error = True
         parsed = {
             "current_conditions_and_forecast": "The AI response could not be formatted into the expected sections. Please retry your question.",
             "historical_context": "This response could not be parsed, so no historical comparison is displayed.",
@@ -435,12 +571,14 @@ def _normalize_structured_answer(raw):
         return items[:6] or fallback
 
     return {
+        "_parse_error": parse_error,
         "current_conditions_and_forecast": clean_text(parsed.get("current_conditions_and_forecast"), "The model did not provide a current forecast summary."),
         "historical_context": clean_text(parsed.get("historical_context"), "Historical rainfall context is unavailable or was not returned."),
         "what_to_watch_next": clean_list(parsed.get("what_to_watch_next"), ["Check updated forecast data and official weather bulletins."]),
         "recommended_actions": clean_list(parsed.get("recommended_actions"), ["Use local conditions and official authority guidance when deciding what to do."]),
         "confidence_and_limitations": clean_text(parsed.get("confidence_and_limitations"), "This is a preliminary model-data explanation, not an official warning."),
     }
+
 
 def _structured_answer_markdown(answer):
     """Keep a readable text transcript for chat history, APIs, and non-rich clients."""
@@ -512,6 +650,24 @@ def _language_fallback(language):
         "recommended_actions": ["Follow official IMD and local-authority guidance for safety decisions."],
         "confidence_and_limitations": "The response did not pass the language check; no new weather measurements or warnings have been inferred.",
     }
+
+
+def _format_retry_instruction(language):
+    """Ask Mistral to repair JSON structure without changing evidence or the selected language."""
+    language_rule = (
+        "Write all user-facing values in natural Tamil; keep JSON keys in English."
+        if language == "ta" else
+        "Write all user-facing values in clear English; keep JSON keys in English."
+    )
+    return (
+        "FORMAT CHECK FAILED: Your previous response was invalid, truncated, or could not be parsed as the required JSON. "
+        "Rewrite it as one complete, valid JSON object with exactly the five required fields: "
+        "current_conditions_and_forecast (string), historical_context (string), what_to_watch_next (array of strings), "
+        "recommended_actions (array of strings), confidence_and_limitations (string). "
+        "Use only facts from the evidence. Do not include Markdown fences, preamble, trailing commentary, raw newlines "
+        "inside JSON strings, or unescaped quotation marks. Keep all text concise so the object is complete. "
+        + language_rule
+    )
 
 
 def _language_retry_instruction(language):
@@ -680,7 +836,7 @@ def ask_mistral(question, district_id=None, start=None, end=None, history=None, 
         "evidence": evidence,
     }, ensure_ascii=False)})
 
-    body = {"model": model, "temperature": 0.2, "max_tokens": 1200, "response_format": {"type": "json_object"}, "messages": messages}
+    body = {"model": model, "temperature": 0.2, "max_tokens": 1800, "response_format": {"type": "json_object"}, "messages": messages}
     try:
         def call_model(messages_to_send):
             request_body = {**body, "messages": messages_to_send}
@@ -702,28 +858,51 @@ def ask_mistral(question, district_id=None, start=None, end=None, history=None, 
             return {"available": False, "language": language, "message": message}
 
         structured_answer = _normalize_structured_answer(raw_answer)
+        format_retry_used = False
+        if structured_answer is not None:
+            format_retry_used = bool(structured_answer.pop("_parse_error", False))
         answer_candidate = structured_answer if structured_answer is not None else raw_answer
-        language_retry_used = False
-        if _answer_language_mismatch(answer_candidate, language):
-            language_retry_used = True
+        language_retry_used = _answer_language_mismatch(answer_candidate, language)
+
+        # A malformed/truncated object gets a format repair retry even if its fallback text
+        # happens to match the selected language. Language mismatches are retried in-language.
+        if format_retry_used or language_retry_used:
+            retry_parts = []
+            if format_retry_used:
+                retry_parts.append(_format_retry_instruction(language))
+            if language_retry_used:
+                retry_parts.append(_language_retry_instruction(language))
             retry_messages = messages + [
                 {"role": "assistant", "content": raw_answer[:5000]},
-                {"role": "user", "content": _language_retry_instruction(language)},
+                {"role": "user", "content": "\\n\\n".join(retry_parts)},
             ]
             try:
                 retry_answer = call_model(retry_messages)
                 retry_structured = _normalize_structured_answer(retry_answer) if retry_answer else None
+                retry_format_error = bool(retry_structured.pop("_parse_error", False)) if retry_structured is not None else True
             except (KeyError, IndexError, TypeError, ValueError) as retry_exc:
-                log.warning("Mistral selected-language retry failed: %r", retry_exc)
-                retry_answer, retry_structured = "", None
+                log.warning("Mistral format/language retry failed: %r", retry_exc)
+                retry_answer, retry_structured, retry_format_error = "", None, True
 
             retry_candidate = retry_structured if retry_structured is not None else retry_answer
-            if retry_answer and retry_structured is not None and not _answer_language_mismatch(retry_candidate, language):
+            if (
+                retry_answer
+                and retry_structured is not None
+                and not retry_format_error
+                and not _answer_language_mismatch(retry_candidate, language)
+            ):
                 raw_answer = retry_answer
                 structured_answer = retry_structured
-            else:
-                # Enforce the user's selected language even if the provider ignores the retry instruction.
+            elif language_retry_used:
+                # Never knowingly return a response in the wrong selected language.
                 structured_answer = _language_fallback(language)
+            elif structured_answer is None or format_retry_used:
+                # Preserve recovered fields if possible; only use the generic fallback when none were recovered.
+                if structured_answer is None or not any(
+                    structured_answer.get(key)
+                    for key in ("current_conditions_and_forecast", "historical_context", "what_to_watch_next", "recommended_actions")
+                ):
+                    structured_answer = _language_fallback(language)
 
         if structured_answer is not None:
             answer = _structured_answer_markdown(structured_answer)
@@ -739,6 +918,7 @@ def ask_mistral(question, district_id=None, start=None, end=None, history=None, 
             "historical_context_available": any(summary is not None and summary.get("valid_daily_values", 0) > 0 for summary in (history_summary, alert_history_summary)),
             "evidence_types": [item["type"] for item in evidence],
             "language_retry_used": language_retry_used,
+            "format_retry_used": format_retry_used,
         }
         if structured_answer is not None:
             response["structured_answer"] = structured_answer
