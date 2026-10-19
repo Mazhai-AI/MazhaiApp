@@ -836,7 +836,7 @@ def ask_mistral(question, district_id=None, start=None, end=None, history=None, 
         "evidence": evidence,
     }, ensure_ascii=False)})
 
-    body = {"model": model, "temperature": 0.2, "max_tokens": 1200, "response_format": {"type": "json_object"}, "messages": messages}
+    body = {"model": model, "temperature": 0.2, "max_tokens": 1800, "response_format": {"type": "json_object"}, "messages": messages}
     try:
         def call_model(messages_to_send):
             request_body = {**body, "messages": messages_to_send}
@@ -858,28 +858,51 @@ def ask_mistral(question, district_id=None, start=None, end=None, history=None, 
             return {"available": False, "language": language, "message": message}
 
         structured_answer = _normalize_structured_answer(raw_answer)
+        format_retry_used = False
+        if structured_answer is not None:
+            format_retry_used = bool(structured_answer.pop("_parse_error", False))
         answer_candidate = structured_answer if structured_answer is not None else raw_answer
-        language_retry_used = False
-        if _answer_language_mismatch(answer_candidate, language):
-            language_retry_used = True
+        language_retry_used = _answer_language_mismatch(answer_candidate, language)
+
+        # A malformed/truncated object gets a format repair retry even if its fallback text
+        # happens to match the selected language. Language mismatches are retried in-language.
+        if format_retry_used or language_retry_used:
+            retry_parts = []
+            if format_retry_used:
+                retry_parts.append(_format_retry_instruction(language))
+            if language_retry_used:
+                retry_parts.append(_language_retry_instruction(language))
             retry_messages = messages + [
                 {"role": "assistant", "content": raw_answer[:5000]},
-                {"role": "user", "content": _language_retry_instruction(language)},
+                {"role": "user", "content": "\\n\\n".join(retry_parts)},
             ]
             try:
                 retry_answer = call_model(retry_messages)
                 retry_structured = _normalize_structured_answer(retry_answer) if retry_answer else None
+                retry_format_error = bool(retry_structured.pop("_parse_error", False)) if retry_structured is not None else True
             except (KeyError, IndexError, TypeError, ValueError) as retry_exc:
-                log.warning("Mistral selected-language retry failed: %r", retry_exc)
-                retry_answer, retry_structured = "", None
+                log.warning("Mistral format/language retry failed: %r", retry_exc)
+                retry_answer, retry_structured, retry_format_error = "", None, True
 
             retry_candidate = retry_structured if retry_structured is not None else retry_answer
-            if retry_answer and retry_structured is not None and not _answer_language_mismatch(retry_candidate, language):
+            if (
+                retry_answer
+                and retry_structured is not None
+                and not retry_format_error
+                and not _answer_language_mismatch(retry_candidate, language)
+            ):
                 raw_answer = retry_answer
                 structured_answer = retry_structured
-            else:
-                # Enforce the user's selected language even if the provider ignores the retry instruction.
+            elif language_retry_used:
+                # Never knowingly return a response in the wrong selected language.
                 structured_answer = _language_fallback(language)
+            elif structured_answer is None or format_retry_used:
+                # Preserve recovered fields if possible; only use the generic fallback when none were recovered.
+                if structured_answer is None or not any(
+                    structured_answer.get(key)
+                    for key in ("current_conditions_and_forecast", "historical_context", "what_to_watch_next", "recommended_actions")
+                ):
+                    structured_answer = _language_fallback(language)
 
         if structured_answer is not None:
             answer = _structured_answer_markdown(structured_answer)
@@ -895,6 +918,7 @@ def ask_mistral(question, district_id=None, start=None, end=None, history=None, 
             "historical_context_available": any(summary is not None and summary.get("valid_daily_values", 0) > 0 for summary in (history_summary, alert_history_summary)),
             "evidence_types": [item["type"] for item in evidence],
             "language_retry_used": language_retry_used,
+            "format_retry_used": format_retry_used,
         }
         if structured_answer is not None:
             response["structured_answer"] = structured_answer
