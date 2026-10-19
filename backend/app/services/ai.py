@@ -476,7 +476,7 @@ def _answer_language_mismatch(answer, language):
             # Very short labels/acronyms are not meaningful language samples.
             continue
         checked += 1
-        tamil = sum("\\u0B80" <= char <= "\\u0BFF" for char in letters)
+        tamil = sum(0x0B80 <= ord(char) <= 0x0BFF for char in letters)
         ratio = tamil / len(letters)
         if language == "ta":
             # Each prose field/list item should be Tamil, not merely one Tamil sentence in an English answer.
