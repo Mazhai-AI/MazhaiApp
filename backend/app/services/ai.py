@@ -72,10 +72,29 @@ def _resolve_district(question, district_id):
         "ஆந்திரப் பிரதேசம்", "தெலங்கானா", "மகாராஷ்டிரா", "புதுச்சேரி", "கோவா",
         "ஜெய்ப்பூர்", "லக்னோ", "அகமதாபாத்", "போபால்",
     )
-    for place in unsupported_places:
-        matched = re.search(re.escape(place), text, re.IGNORECASE) if any(ord(ch) > 127 for ch in place) else re.search(r"(?<![\w])" + re.escape(place) + r"(?![\w])", text, re.IGNORECASE)
-        if matched:
-            return None
+    def candidates(name):
+        values = [name]
+        if any(ord(ch) > 127 for ch in name):
+            if name.endswith("ம்"):
+                stem = name[:-2]
+                values.extend((stem + "த்தில்", stem + "த்துக்கு", stem + "த்தின்"))
+            elif name.endswith(("ர்", "ல்", "ள்", "ன்")):
+                stem = name[:-1]
+                values.extend((stem + "ில்", stem + "ுக்கு", stem + "ின்"))
+        return tuple(dict.fromkeys(values))
+
+    def mentions(name):
+        for candidate in candidates(name):
+            if any(ord(ch) > 127 for ch in candidate):
+                matched = re.search(re.escape(candidate), text, re.IGNORECASE)
+            else:
+                matched = re.search(r"(?<![\w])" + re.escape(candidate) + r"(?![\w])", text, re.IGNORECASE)
+            if matched:
+                return True
+        return False
+
+    if any(mentions(place) for place in unsupported_places):
+        return None
 
     aliases = {
         "ariyalur": ("அரியலூர்",),
@@ -129,11 +148,7 @@ def _resolve_district(question, district_id):
     for district in sorted(DISTRICTS, key=lambda item: len(item["name"]), reverse=True):
         names = (district["name"], district["id"], *legacy_aliases.get(district["id"], ()), *aliases.get(district["id"], ()))
         for name in names:
-            if any(ord(ch) > 127 for ch in name):
-                matched = re.search(re.escape(name), text, re.IGNORECASE)
-            else:
-                matched = re.search(r"(?<![\w])" + re.escape(name) + r"(?![\w])", text, re.IGNORECASE)
-            if matched:
+            if mentions(name):
                 return district
     return next((item for item in DISTRICTS if item["id"] == str(district_id or "").strip().casefold()), None)
 
