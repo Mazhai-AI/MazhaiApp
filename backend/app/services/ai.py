@@ -297,7 +297,7 @@ def _structured_answer_markdown(answer):
     return "\n\n".join(f"{heading}\n{body}" for heading, body in sections)
 
 
-def ask_mistral(question, district_id=None, start=None, end=None, history=None):
+def ask_mistral(question, district_id=None, start=None, end=None, history=None, language="en"):
     api_key = os.getenv("MISTRAL_API_KEY", "").strip()
     if not api_key:
         return {"available": False, "message": "Mistral AI is not configured. Set MISTRAL_API_KEY in the backend environment to enable evidence-grounded analysis."}
@@ -362,7 +362,9 @@ def ask_mistral(question, district_id=None, start=None, end=None, history=None):
 
     model = os.getenv("MISTRAL_MODEL", "ministral-8b-2512").strip() or "ministral-8b-2512"
     location_name = chosen_district["name"] if chosen_district else None
+    language_instruction = ("Respond entirely in natural Tamil (தமிழ்), using clear, everyday Tamil and retaining exact numeric values, units, dates, and place names. Keep the required JSON field keys exactly as specified in English, but write all field values in Tamil." if language == "ta" else "Respond entirely in English. Keep the required JSON field keys exactly as specified.")
     system = (
+        language_instruction + " "
         "You are Mazhai AI, a careful rainfall evidence explainer for Tamil Nadu. "
         f"Today is {now_ist:%A, %d %B %Y} (India Standard Time). "
         "Use only the supplied JSON evidence for factual claims. Never invent measurements, incidents, "
