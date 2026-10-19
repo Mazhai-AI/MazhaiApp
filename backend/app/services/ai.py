@@ -418,7 +418,7 @@ def ask_mistral(question, district_id=None, start=None, end=None, history=None):
             "answer": answer,
             "location": location_name,
             "alert": alert,
-            "historical_context_available": history_summary is not None and history_summary.get("valid_daily_values", 0) > 0,
+            "historical_context_available": any(summary is not None and summary.get("valid_daily_values", 0) > 0 for summary in (history_summary, alert_history_summary)),
             "evidence_types": [item["type"] for item in evidence],
         }
         if structured_answer:
