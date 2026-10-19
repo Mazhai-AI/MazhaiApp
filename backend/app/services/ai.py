@@ -116,7 +116,7 @@ def _resolve_district(question, district_id):
         "vellore": ("வேலூர்",),
         "viluppuram": ("விழுப்புரம்", "villupuram"),
         "virudhunagar": ("விருதுநகர்",),
-        "the nilgiris": ("nilgiris",),
+        "nilgiris": ("நீலகிரி", "the nilgiris",),
     }
     legacy_aliases = {
         "tiruchirappalli": ("trichy",),
