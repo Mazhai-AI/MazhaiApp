@@ -44,6 +44,34 @@ class BackendTests(unittest.TestCase):
     def test_env_loaded_before_db_import(self):
         self.assertEqual(str(db.DB_PATH), os.environ["MAZHAI_DB_PATH"])
 
+
+    def test_chennai_ward_geojson_is_complete_and_attributed(self):
+        path = ROOT / "frontend" / "data" / "geo" / "chennai-wards.geojson"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(data["type"], "FeatureCollection")
+        self.assertEqual(data["license"], "CC BY-SA 2.5 India")
+        self.assertIn("Transparent Chennai", data["attribution"])
+        self.assertEqual(len(data["features"]), 200)
+        ward_numbers = [feature["properties"]["Ward_No"] for feature in data["features"]]
+        self.assertEqual(set(ward_numbers), set(range(1, 201)))
+        self.assertEqual(len(ward_numbers), len(set(ward_numbers)))
+
+        def check_positions(value):
+            if isinstance(value, list) and len(value) >= 2 and all(isinstance(v, (int, float)) for v in value[:2]):
+                longitude, latitude = value[:2]
+                self.assertTrue(-180 <= longitude <= 180)
+                self.assertTrue(-90 <= latitude <= 90)
+            elif isinstance(value, list):
+                for child in value:
+                    check_positions(child)
+
+        for feature in data["features"]:
+            self.assertEqual(feature["geometry"]["type"], "Polygon")
+            for ring in feature["geometry"]["coordinates"]:
+                self.assertGreaterEqual(len(ring), 4)
+                self.assertEqual(ring[0], ring[-1])
+                check_positions(ring)
+
     def test_forecast_hourly_window_starts_from_current_timestamp(self):
         from datetime import datetime, timedelta
 
