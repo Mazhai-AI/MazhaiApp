@@ -11,7 +11,8 @@ Mazhai AI is a full-stack web application with an HTML/CSS/vanilla JavaScript fr
 - District comparison for a selected period.
 - Leaflet district-reference map and district explorer.
 - Source registry, data freshness, cached-data fallback, and transparent provider limitations.
-- Optional Mistral assistant that receives retrieved weather/history evidence.
+- Optional Mistral assistant that receives retrieved weather/history evidence and returns validated structured sections (current forecast, historical context, what to watch, actions, and limitations).
+- An explicitly labelled app-generated rainfall-attention indicator that combines upcoming forecast rainfall with recent historical rainfall; it never claims to be an official warning.
 - API validation, bounded upstream timeouts, SQLite cache, and tests.
 
 ## Important data limitations
@@ -20,7 +21,7 @@ Mazhai AI is a full-stack web application with an HTML/CSS/vanilla JavaScript fr
 - Coverage can vary by date and location. Missing values are not treated as zero.
 - IMD data and official warnings are listed as not integrated. The application links to IMD, but does not claim to ingest or reproduce official warnings.
 - This initial version does not ingest verified historical flood/incident reports, does not train a local ML model, and does not issue flood forecasts or emergency alerts.
-- The rainfall signal is not a calibrated risk score. Follow official IMD and local authority instructions for safety decisions.
+- The dashboard signal and AI rainfall-attention bands are preliminary app-generated screening indicators based on available forecast amounts and recent rainfall context. Their thresholds are not calibrated, validated impact thresholds, or official IMD categories; they are not flood predictions or emergency alerts. Follow official IMD bulletins and local authority instructions for safety decisions.
 - Mistral is an optional explanation layer, not a numerical weather prediction engine.
 
 ## Requirements

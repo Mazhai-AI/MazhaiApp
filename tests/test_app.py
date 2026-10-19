@@ -44,6 +44,35 @@ class BackendTests(unittest.TestCase):
     def test_env_loaded_before_db_import(self):
         self.assertEqual(str(db.DB_PATH), os.environ["MAZHAI_DB_PATH"])
 
+    def test_forecast_hourly_window_starts_from_current_timestamp(self):
+        from datetime import datetime, timedelta
+
+        start = datetime.fromisoformat("2026-10-19T00:00")
+        times = [(start + timedelta(hours=i)).isoformat(timespec="minutes") for i in range(72)]
+        raw = {
+            "current": {"time": "2026-10-19T12:00", "temperature_2m": 25,
+                        "relative_humidity_2m": 70, "precipitation": 0.2,
+                        "wind_speed_10m": 8, "wind_direction_10m": 180, "cloud_cover": 30},
+            "daily": {"time": [f"2026-10-{day:02d}" for day in range(19, 26)],
+                      "precipitation_sum": [0.0] * 7,
+                      "precipitation_probability_max": [10] * 7,
+                      "temperature_2m_max": [30] * 7, "temperature_2m_min": [24] * 7},
+            "hourly": {"time": times, "precipitation": list(range(72)),
+                       "precipitation_probability": [20] * 72, "temperature_2m": [25] * 72},
+            "timezone": "Asia/Kolkata",
+        }
+        old_urlopen = weather.urlopen
+        try:
+            weather.urlopen = lambda req, timeout=None: FakeResp(raw)
+            forecast = weather.get_forecast("chennai", force=True)
+        finally:
+            weather.urlopen = old_urlopen
+
+        self.assertEqual(len(forecast["hourly"]), 48)
+        self.assertEqual(forecast["hourly"][0]["time"], "2026-10-19T12:00")
+        self.assertEqual(forecast["hourly"][0]["precipitation_mm"], 12)
+        self.assertEqual(forecast["hourly"][-1]["time"], "2026-10-21T11:00")
+
     def test_history_normalizes_district_case(self):
         weather.urlopen = archive_ok
         weather.get_history("CHENNAI", "2026-10-01", "2026-10-02", force=True)
@@ -120,6 +149,88 @@ class AiTests(unittest.TestCase):
     def test_malformed_response(self):
         ai.urlopen = lambda req, timeout=None: FakeResp({"unexpected": True})
         self.assertFalse(ai.ask_mistral("q?")["available"])
+
+
+    def test_rainfall_attention_indicator_uses_explicit_app_bands(self):
+        alert = ai._build_rainfall_alert({
+            "stale": False,
+            "next_48_hours": {"precipitation_mm": 35.0, "peak_precipitation_probability_pct": 70},
+            "maximum_daily_forecast": {"date": "2026-10-21", "precipitation_mm": 21.2},
+        })
+        self.assertEqual(alert["level"], "Elevated")
+        self.assertFalse(alert["is_official"])
+        self.assertIn("not official", alert["basis"].lower())
+
+    def test_missing_forecast_is_not_called_routine(self):
+        alert = ai._build_rainfall_alert({
+            "stale": False,
+            "next_48_hours": {"precipitation_mm": None, "peak_precipitation_probability_pct": None},
+            "maximum_daily_forecast": {"date": None, "precipitation_mm": None},
+        })
+        self.assertEqual(alert["level"], "Unable to assess")
+        self.assertFalse(alert["is_official"])
+
+    def test_explicit_district_overrides_selected_and_default_history_is_attached(self):
+        from datetime import date, timedelta
+
+        today = date.today()
+        daily = [
+            {"date": (today + timedelta(days=i)).isoformat(),
+             "precipitation_mm": [21.2, 13.8, 4.0, 2.0, 0.0, 0.0, 0.0][i],
+             "precipitation_probability_pct": [90, 90, 45, 30, 10, 10, 5][i],
+             "temp_max_c": 30, "temp_min_c": 24}
+            for i in range(7)
+        ]
+        forecast = {
+            "source": "Open-Meteo Forecast API", "retrieved_at": "2026-10-19T10:00:00+00:00",
+            "cached": False, "stale": False,
+            "current": {"temperature_c": 29, "precipitation_mm": 0.2, "humidity_pct": 82},
+            "daily": daily,
+            "hourly": [{"time": today.isoformat(), "precipitation_mm": 8.5, "precipitation_probability_pct": 90}],
+        }
+        historical = {
+            "source": "Open-Meteo Historical Weather API (reanalysis)",
+            "records": [
+                {"date": (today - timedelta(days=i)).isoformat(), "precipitation_mm": 30.0 if i == 1 else 2.0}
+                for i in range(30)
+            ],
+            "stale": False, "retrieved_at": "2026-10-19T10:00:00+00:00",
+        }
+        old_forecast, old_history = ai.get_forecast, ai.get_history
+        try:
+            ai.get_forecast = lambda district_id: forecast
+            ai.get_history = lambda district_id, start, end: historical
+            ai.urlopen = self._fake("## Location and alert\n- Alert: Watch")
+            result = ai.ask_mistral("Give me the rainfall alert for Chennai", district_id="coimbatore")
+        finally:
+            ai.get_forecast, ai.get_history = old_forecast, old_history
+
+        self.assertEqual(result["location"], "Chennai")
+        self.assertTrue(result["historical_context_available"])
+        sent_json = json.loads(self.sent["messages"][-1]["content"])
+        self.assertEqual(sent_json["evidence_location"], "Chennai")
+        self.assertIn("historical_rainfall_summary", [item["type"] for item in sent_json["evidence"]])
+        self.assertIn("JSON object", self.sent["messages"][0]["content"])
+
+
+    def test_structured_json_response_returns_normalized_fields(self):
+        payload = {
+            "current_conditions_and_forecast": "Chennai has a forecasted rain window.",
+            "historical_context": "Recent reanalysis shows a wet spell.",
+            "what_to_watch_next": ["Check rainfall updates tomorrow."],
+            "recommended_actions": ["Follow official advisories."],
+            "confidence_and_limitations": "Model values are not station measurements.",
+        }
+        ai.urlopen = self._fake(json.dumps(payload))
+        result = ai.ask_mistral("Give me a place-specific rainfall alert.")
+        self.assertTrue(result["available"])
+        self.assertEqual(result["structured_answer"]["historical_context"], payload["historical_context"])
+        self.assertEqual(self.sent["response_format"], {"type": "json_object"})
+        self.assertIn("## Historical context", result["answer"])
+
+    def test_unsupported_city_does_not_fall_back_to_selected_tamil_nadu_district(self):
+        self.assertIsNone(ai._resolve_district("Will it rain in Bengaluru?", "chennai"))
+        self.assertEqual(ai._resolve_district("Rain outlook for Chennai?", "coimbatore")["id"], "chennai")
 
 
 if __name__ == "__main__":

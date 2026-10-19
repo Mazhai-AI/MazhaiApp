@@ -192,6 +192,84 @@ async function loadSources(){
     $("#stored-source-table").innerHTML=s.stored_history.length?`<div class="table-scroll"><table class="data-table"><thead><tr><th>Source</th><th>Stored records</th><th>Latest retrieval</th></tr></thead><tbody>${s.stored_history.map(r=>`<tr><td>${escapeHTML(r.source)}</td><td>${r.records}</td><td>${escapeHTML(r.latest||"—")}</td></tr>`).join("")}</tbody></table></div>`:'<div class="empty-state">No historical observations stored yet. Load a historical date range to ingest records.</div>';
   }catch(e){$("#source-cards").innerHTML=`<div class="panel empty-state">${escapeHTML(e.message)}</div>`}
 }
+function renderInlineMarkdown(value){
+  return escapeHTML(value)
+    .replace(/`([^`]+)`/g,"<code>$1</code>")
+    .replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g,"$1<em>$2</em>");
+}
+function renderMarkdown(message){
+  const lines=String(message??"").replace(/\r\n?/g,"\n").split("\n");
+  const html=[];let paragraph=[];let listType=null;let listItems=[];
+  const flushParagraph=()=>{if(paragraph.length){html.push("<p>"+paragraph.map(renderInlineMarkdown).join(" ")+"</p>");paragraph=[]}};
+  const flushList=()=>{if(listType){html.push("<"+listType+">"+listItems.join("")+"</"+listType+">");listType=null;listItems=[]}};
+  const closeBlocks=()=>{flushParagraph();flushList()};
+  for(const raw of lines){
+    const line=raw.trim();
+    if(!line){closeBlocks();continue}
+    if(/^[-*_]{3,}$/.test(line)){closeBlocks();html.push("<hr>");continue}
+    const heading=line.match(/^(#{1,6})\s+(.+)$/);
+    if(heading){closeBlocks();const tag=heading[1].length<=2?"h4":"h5";html.push("<"+tag+">"+renderInlineMarkdown(heading[2])+"</"+tag+">");continue}
+    const bullet=line.match(/^[-*+]\s+(.+)$/);
+    const ordered=line.match(/^\d+[.)]\s+(.+)$/);
+    if(bullet||ordered){
+      flushParagraph();const type=bullet?"ul":"ol";
+      if(listType&&listType!==type)flushList();
+      if(!listType)listType=type;
+      listItems.push("<li>"+renderInlineMarkdown((bullet||ordered)[1])+"</li>");
+      continue;
+    }
+    const quote=line.match(/^>\s?(.*)$/);
+    if(quote){closeBlocks();html.push("<blockquote>"+renderInlineMarkdown(quote[1])+"</blockquote>");continue}
+    if(listType)flushList();
+    paragraph.push(line);
+  }
+  closeBlocks();
+  return html.join("");
+}
+function renderAssistantReply(container,result,reply){
+  container.replaceChildren();
+  if(result?.alert){
+    const alert=result.alert;
+    const level=String(alert.level||"Unable to assess");
+    const slug=level.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")||"unknown";
+    const card=document.createElement("section");card.className="ai-alert-card ai-alert-"+slug;
+    const head=document.createElement("div");head.className="ai-alert-head";
+    const title=document.createElement("strong");title.className="ai-alert-title";title.textContent="Rainfall attention · "+(result?.location?result.location+" · ":"")+level;
+    const badge=document.createElement("span");badge.className="ai-alert-badge";badge.textContent="APP INDICATOR · NOT OFFICIAL";
+    head.append(title,badge);
+    const rationale=document.createElement("p");rationale.className="ai-alert-rationale";rationale.textContent=alert.rationale||"The available evidence could not determine an attention level.";
+    const note=document.createElement("p");note.className="ai-alert-note";note.textContent="Preliminary forecast screening only. This is not an IMD warning or a flood prediction.";
+    card.append(head,rationale,note);container.append(card);
+  }
+  if(result?.structured_answer&&typeof result.structured_answer==="object"){
+    const answer=result.structured_answer;
+    const sections=[
+      ["Current conditions and forecast","current_conditions_and_forecast"],
+      ["Historical context","historical_context"],
+      ["What to watch next","what_to_watch_next"],
+      ["Recommended actions","recommended_actions"],
+      ["Confidence and limitations","confidence_and_limitations"]
+    ];
+    for(const [heading,key] of sections){
+      const section=document.createElement("section");section.className="assistant-answer-section";
+      const title=document.createElement("h4");title.textContent=heading;section.append(title);
+      const value=answer[key];
+      if(Array.isArray(value)){
+        const list=document.createElement("ul");
+        value.filter(item=>typeof item==="string"&&item.trim()).forEach(item=>{const li=document.createElement("li");li.textContent=item;list.append(li)});
+        section.append(list);
+      }else{
+        const p=document.createElement("p");p.textContent=typeof value==="string"&&value.trim()?value:"No details were returned for this section.";section.append(p);
+      }
+      container.append(section);
+    }
+    return;
+  }
+  const body=document.createElement("div");body.className="assistant-markdown";body.innerHTML=renderMarkdown(reply);
+  container.append(body);
+}
+
 async function sendQuestion(question){
   const input=$("#chat-input"),text=(question||input.value).trim();if(!text||state.asking)return;
   state.asking=true;
@@ -205,7 +283,7 @@ async function sendQuestion(question){
     const start=$("#history-start").value,end=$("#history-end").value;if(start&&end&&end>=start){body.start=start;body.end=end}
     const result=await api("/ai/ask",{method:"POST",body:JSON.stringify(body),signal:controller.signal});
     const reply=result.available?result.answer:result.message;
-    bubble.textContent=typeof reply==="string"&&reply?reply:"The assistant returned no answer.";
+    renderAssistantReply(bubble,result,typeof reply==="string"&&reply?reply:"The assistant returned no answer.");
     if(result.available){state.chatHistory.push({role:"user",content:text},{role:"assistant",content:reply});state.chatHistory=state.chatHistory.slice(-12)}
     $("#ai-status").textContent=result.available?`Connected · ${result.model}`:"Mistral unavailable or not configured";
   }catch(e){bubble.textContent=e.name==="AbortError"?"The request took too long. Please try again.":`I couldn't complete this request: ${e.message}`}

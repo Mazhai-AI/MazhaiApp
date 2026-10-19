@@ -77,6 +77,18 @@ def get_forecast(district_id, force=False):
         current = raw.get("current", {})
         daily = raw.get("daily", {})
         hourly = raw.get("hourly", {})
+        hourly_times = hourly.get("time", [])
+        current_time = current.get("time")
+        # Forecast API hourly arrays often begin at local midnight. Start the
+        # display/evidence window at the current provider timestamp instead of
+        # accidentally summing hours that have already elapsed.
+        hourly_start = next(
+            (i for i, stamp in enumerate(hourly_times)
+             if isinstance(stamp, str) and isinstance(current_time, str) and stamp >= current_time),
+            0,
+        )
+        hourly_end = min(hourly_start + 48, len(hourly_times))
+        hourly_indices = range(hourly_start, hourly_end)
         payload = {
             "district": district, "source": "Open-Meteo Forecast API",
             "source_url": "https://open-meteo.com/en/docs",
@@ -100,7 +112,7 @@ def get_forecast(district_id, force=False):
                  "precipitation_mm": _at(hourly.get("precipitation"), i),
                  "precipitation_probability_pct": _at(hourly.get("precipitation_probability"), i),
                  "temperature_c": _at(hourly.get("temperature_2m"), i)}
-                for i in range(min(48, len(hourly.get("time", []))))
+                for i in hourly_indices
             ],
             "fetched_live": True
         }
