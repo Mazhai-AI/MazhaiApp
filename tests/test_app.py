@@ -103,6 +103,17 @@ class BackendTests(unittest.TestCase):
         r = self.client.post("/api/ai/ask", json={"question": "will it rain?"}).json()
         self.assertFalse(r["available"])
 
+    def test_oversized_chat_history_is_trimmed_instead_of_rejected(self):
+        long_answer = "Historical rainfall and forecast context. " * 80
+        r = self.client.post("/api/ai/ask", json={
+            "question": "What is the situation in Chennai?",
+            "district_id": "chennai",
+            "history": [{"role": "assistant", "content": long_answer}],
+        })
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertFalse(r.json()["available"])  # Mistral key is intentionally absent in this test.
+
+
 
 class AiTests(unittest.TestCase):
     def setUp(self):

@@ -257,10 +257,10 @@ function renderAssistantReply(container,result,reply){
       const value=answer[key];
       if(Array.isArray(value)){
         const list=document.createElement("ul");
-        value.filter(item=>typeof item==="string"&&item.trim()).forEach(item=>{const li=document.createElement("li");li.textContent=item;list.append(li)});
+        value.filter(item=>typeof item==="string"&&item.trim()).forEach(item=>{const li=document.createElement("li");li.innerHTML=renderInlineMarkdown(item);list.append(li)});
         section.append(list);
       }else{
-        const p=document.createElement("p");p.textContent=typeof value==="string"&&value.trim()?value:"No details were returned for this section.";section.append(p);
+        const p=document.createElement("p");p.innerHTML=renderInlineMarkdown(typeof value==="string"&&value.trim()?value:"No details were returned for this section.");section.append(p);
       }
       container.append(section);
     }
@@ -279,12 +279,12 @@ async function sendQuestion(question){
   const bubble=placeholder.querySelector(".chat-bubble");
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),70000);
   try{
-    const body={question:text,district_id:state.districtId,history:state.chatHistory.slice(-8)};
+    const body={question:text,district_id:state.districtId,history:state.chatHistory.slice(-8).map(turn=>({role:turn.role,content:String(turn.content??"").slice(0,1400)}))};
     const start=$("#history-start").value,end=$("#history-end").value;if(start&&end&&end>=start){body.start=start;body.end=end}
     const result=await api("/ai/ask",{method:"POST",body:JSON.stringify(body),signal:controller.signal});
     const reply=result.available?result.answer:result.message;
     renderAssistantReply(bubble,result,typeof reply==="string"&&reply?reply:"The assistant returned no answer.");
-    if(result.available){state.chatHistory.push({role:"user",content:text},{role:"assistant",content:reply});state.chatHistory=state.chatHistory.slice(-12)}
+    if(result.available){state.chatHistory.push({role:"user",content:text.slice(0,1400)},{role:"assistant",content:String(reply??"").slice(0,1400)});state.chatHistory=state.chatHistory.slice(-12)}
     $("#ai-status").textContent=result.available?`Connected · ${result.model}`:"Mistral unavailable or not configured";
   }catch(e){bubble.textContent=e.name==="AbortError"?"The request took too long. Please try again.":`I couldn't complete this request: ${e.message}`}
   finally{clearTimeout(timer);state.asking=false;if(submit)submit.disabled=false}
