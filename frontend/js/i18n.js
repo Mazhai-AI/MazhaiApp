@@ -133,6 +133,11 @@ const TA = {
   "Preliminary forecast screening only. This is not an IMD warning or a flood prediction.": "முன்னறிவிப்பின் ஆரம்ப நிலைத் திரையிடல் மட்டுமே. இது IMD எச்சரிக்கையோ வெள்ள முன்னறிவிப்போ அல்ல.",
   "The available evidence could not determine an attention level.": "கிடைத்த ஆதாரங்களால் கவனநிலையைத் தீர்மானிக்க முடியவில்லை.",
   "Source unavailable": "ஆதாரம் கிடைக்கவில்லை",
+  "Routine": "வழக்கமான நிலை",
+  "Watch": "கண்காணிப்பு",
+  "Elevated": "உயர்ந்த கவனநிலை",
+  "High attention": "அதிக கவனம் தேவை",
+  "Unable to assess": "மதிப்பிட முடியவில்லை",
   "Rainfall attention": "மழைப்பொழிவு கவனநிலை", "Current conditions and forecast": "தற்போதைய நிலை மற்றும் முன்னறிவிப்பு",
   "Historical context": "வரலாற்றுப் பின்னணி", "What to watch next": "அடுத்து கவனிக்க வேண்டியவை",
   "Recommended actions": "பரிந்துரைக்கப்படும் நடவடிக்கைகள்", "Confidence and limitations": "நம்பகத்தன்மை மற்றும் வரம்புகள்",
@@ -312,18 +317,33 @@ function translatePhrase(value, language) {
   if (match) return match[2] + " முன்னறிவிப்பு நாட்களில் " + match[1] + " நாட்களில் குறைந்தது 1 மிமீ மழை எதிர்பார்க்கப்படுகிறது. அதிகபட்ச தினசரி அளவு " + match[3] + " மிமீ (" + match[4] + ").";
   match = value.match(/^([^·]+) · current$/);
   if (match) return translatePhrase(match[1].trim(), language) + " · தற்போதைய நிலை";
-  match = value.match(/^(\\d+)\\/38 districts returned values\\.\\s*(.*)$/);
+  match = value.match(/^(\d+)\/38 districts returned values\.\s*(.*)$/);
   if (match) return "38 மாவட்டங்களில் " + match[1] + " மாவட்டங்களுக்கு மதிப்புகள் கிடைத்தன." + (match[2] ? " " + match[2] : "");
   match = value.match(/^Historical data unavailable: (.+)$/);
   if (match) return "வரலாற்றுத் தரவு கிடைக்கவில்லை: " + match[1];
   match = value.match(/^Weather could not be loaded: (.+)$/);
   if (match) return "வானிலைத் தரவை ஏற்ற முடியவில்லை: " + match[1];
-  match = value.match(/^State boundary data could not be loaded\\. The basemap and Tamil Nadu district markers remain available\\. \\((.+)\\)$/);
+  match = value.match(/^State boundary data could not be loaded\. The basemap and Tamil Nadu district markers remain available\. \((.+)\)$/);
   if (match) return "மாநில எல்லைத் தரவை ஏற்ற முடியவில்லை. அடிப்படை வரைபடமும் தமிழ்நாடு மாவட்டக் குறியீடுகளும் கிடைக்கும். (" + match[1] + ")";
+  match = value.match(/^Rainfall attention · (.+) · (Routine|Watch|Elevated|High attention|Unable to assess)$/);
+  if (match) return "மழைப்பொழிவு கவனநிலை · " + translatePhrase(match[1], language) + " · " + translatePhrase(match[2], language);
+  match = value.match(/^The forecast indicates about ([\d.]+) mm over the next 48 hours\.$/);
+  if (match) return "அடுத்த 48 மணிநேரத்தில் சுமார் " + match[1] + " மிமீ மழை பெய்யும் என முன்னறிவிப்பு கூறுகிறது.";
+  match = value.match(/^The highest daily forecast is ([\d.]+) mm on (.+)\.$/);
+  if (match) return "அதிகபட்ச தினசரி மழை முன்னறிவிப்பு " + match[2] + " அன்று " + match[1] + " மிமீ.";
+  match = value.match(/^Rainfall probability peaks at ([\d.]+)% and the available forecast indicates some rainfall\.$/);
+  if (match) return "மழை பெய்யும் நிகழ்தகவு அதிகபட்சம் " + match[1] +%. கிடைத்த முன்னறிவிப்பில் மழை சாத்தியம் உள்ளது.";
+  match = value.match(/^The available forecast amounts are below the app's Watch threshold\.$/);
+  if (match) return "கிடைத்த முன்னறிவிப்பு அளவுகள் பயன்பாட்டின் கண்காணிப்பு வரம்புக்குக் கீழே உள்ளன.";
   match = value.match(/^Connected · (.+)$/);
   if (match) return "இணைக்கப்பட்டது · " + match[1];
   match = value.match(/^Cannot connect to Mazhai AI API: (.+)$/);
   if (match) return "மழை AI API-ஐ இணைக்க முடியவில்லை: " + match[1];
+  const sentences = value.split(/(?<=\\.)\\s+(?=[A-Z])/);
+  if (sentences.length > 1) {
+    const translated = sentences.map(sentence => translatePhrase(sentence, language)).join(" ");
+    if (translated !== value) return translated;
+  }
   return value;
 }
 
