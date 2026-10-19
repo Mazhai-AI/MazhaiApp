@@ -333,7 +333,7 @@ class AiTests(unittest.TestCase):
         prompt_en = ai._build_system_prompt(datetime(2026, 10, 20, 0, 0), "en")
         self.assertIn("LANGUAGE LOCK: The selected response language is TAMIL (தமிழ்)", prompt_ta)
         self.assertIn("Keep field names in English", prompt_ta)
-        self.assertIn("clear English", prompt_en)
+        self.assertIn("LANGUAGE LOCK: The selected response language is ENGLISH", prompt_en)
         self.assertIn('"what_to_watch_next": array of 2-4 strings', prompt_en)
 
     def test_language_guard_checks_every_section_not_only_combined_ratio(self):
