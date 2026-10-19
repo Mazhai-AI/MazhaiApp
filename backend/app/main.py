@@ -17,7 +17,7 @@ load_dotenv(ROOT / ".env")
 from fastapi import FastAPI, HTTPException, Query, Request  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
-from pydantic import BaseModel, Field  # noqa: E402
+from pydantic import BaseModel, Field, field_validator  # noqa: E402
 from .districts import DISTRICTS  # noqa: E402
 from .database.db import init_db  # noqa: E402
 from .services.weather import get_forecast, get_history, get_source_status, ProviderError  # noqa: E402
@@ -37,6 +37,15 @@ app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=Fals
 class ChatTurn(BaseModel):
     role: Literal["user", "assistant"]
     content: str = Field(min_length=1, max_length=1500)
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def bound_history_content(cls, value):
+        # Older assistant answers can be longer than the per-turn context budget.
+        # Trim history rather than rejecting the user's next chat request (422).
+        if isinstance(value, str):
+            return value[:1500]
+        return value
 
 class AskRequest(BaseModel):
     question: str = Field(min_length=3, max_length=1200)
