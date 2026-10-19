@@ -8,8 +8,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY .env /app/.env
-
 COPY backend/requirements.txt /app/backend/requirements.txt
 
 RUN pip install --no-cache-dir \
