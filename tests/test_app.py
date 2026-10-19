@@ -277,6 +277,42 @@ class AiTests(unittest.TestCase):
         self.assertEqual(self.sent["response_format"], {"type": "json_object"})
         self.assertIn("## Historical context", result["answer"])
 
+    def test_follow_up_response_with_quotes_inside_json_strings_is_still_structured(self):
+        malformed = (
+            '{"current_conditions_and_forecast":"Chennai forecast shows "24.2 mm" on 21 October.",'
+            '"historical_context":"Recent rain was above average.",'
+            '"what_to_watch_next":["Monitor the "24.2 mm" daily estimate."],'
+            '"recommended_actions":["Check official IMD advisories."],'
+            '"confidence_and_limitations":"Model forecast, not a station measurement."}'
+        )
+        ai.urlopen = self._fake(malformed)
+        result = ai.ask_mistral("And what about tomorrow?")
+        self.assertTrue(result["available"])
+        self.assertIn("24.2 mm", result["structured_answer"]["current_conditions_and_forecast"])
+        self.assertIn("## Current conditions and forecast", result["answer"])
+        self.assertFalse(result["answer"].lstrip().startswith("{"))
+
+    def test_structured_response_parser_accepts_fenced_and_double_encoded_json(self):
+        payload = {
+            "current_conditions_and_forecast": "Chennai forecast updated.",
+            "historical_context": "Recent rainfall context available.",
+            "what_to_watch_next": ["Check the next forecast update."],
+            "recommended_actions": ["Check official advisories."],
+            "confidence_and_limitations": "Model estimates are not station observations.",
+        }
+        encoded = json.dumps(payload)
+        fence = chr(96) * 3 + "json\n" + encoded + "\n" + chr(96) * 3
+        self.assertEqual(ai._normalize_structured_answer(fence)["historical_context"], payload["historical_context"])
+        self.assertEqual(ai._normalize_structured_answer(json.dumps(encoded))["historical_context"], payload["historical_context"])
+
+    def test_invalid_structured_model_output_never_leaks_raw_json_to_chat(self):
+        raw = '{"current_conditions_and_forecast":"partial response","recommended_actions":'
+        structured = ai._normalize_structured_answer(raw)
+        self.assertIsNotNone(structured)
+        markdown = ai._structured_answer_markdown(structured)
+        self.assertIn("could not be formatted", markdown)
+        self.assertFalse(markdown.lstrip().startswith("{"))
+
     def test_tamil_language_instruction_is_sent_to_mistral(self):
         payload = {
             "current_conditions_and_forecast": "சென்னையில் மழை பெய்ய வாய்ப்புள்ளது.",
