@@ -321,7 +321,7 @@ function wireEvents(){
   $("#chat-form").addEventListener("submit",e=>{e.preventDefault();sendQuestion()});
   $$(".suggested-questions button").forEach(b=>b.addEventListener("click",()=>sendQuestion(b.dataset.question)));
   $("#mobile-menu").addEventListener("click",()=>$("#sidebar").classList.toggle("open"));
-  $("#save-settings").addEventListener("click",()=>{setLanguage($("#language-select").value);applyLanguage(getLanguage());$("#language-select").value=getLanguage();selectDistrict($("#default-district").value);$("#settings-saved").textContent=t("Preferences saved in this browser.");toast(t("Preferences saved."));});
+  $("#save-settings").addEventListener("click",()=>{setLanguage($("#language-select").value);applyLanguage(getLanguage());$("#language-select").value=getLanguage();$("#today-label").textContent=today.toLocaleDateString(getLanguage()==="ta"?"ta-IN":"en-IN",{weekday:"short",day:"numeric",month:"short",year:"numeric"});selectDistrict($("#default-district").value);$("#settings-saved").textContent=t("Preferences saved in this browser.");toast(t("Preferences saved."));});
 }
 async function refreshCurrent(force=false){
   try{
