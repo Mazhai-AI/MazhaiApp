@@ -56,7 +56,7 @@ Set these in `.env` on the server:
 
 ```dotenv
 MISTRAL_API_KEY=your_server_side_key
-MISTRAL_MODEL=mistral-small-latest
+MISTRAL_MODEL=ministral-8b-2512
 ```
 
 Never put the key in frontend files, browser storage, or a committed repository. The application starts without this key and shows a clear unavailable state.
@@ -66,7 +66,7 @@ Never put the key in frontend files, browser storage, or a committed repository.
 | Variable | Purpose | Default |
 |---|---|---|
 | `MISTRAL_API_KEY` | Server-side Mistral credential | empty |
-| `MISTRAL_MODEL` | Mistral chat model | `mistral-small-latest` |
+| `MISTRAL_MODEL` | Mistral chat model | `ministral-8b-2512` |
 | `MAZHAI_DB_PATH` | SQLite database file | `./data/mazhai.db` |
 | `UPSTREAM_TIMEOUT_SECONDS` | Upstream API timeout | `12` |
 | `WEATHER_CACHE_TTL_SECONDS` | Weather cache TTL | `900` |

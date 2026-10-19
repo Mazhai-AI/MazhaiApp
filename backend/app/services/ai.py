@@ -25,7 +25,7 @@ def ask_mistral(question, district_id=None, start=None, end=None):
                 evidence.append({"type":"history_unavailable","detail":str(exc)})
     if not evidence:
         evidence.append({"type":"scope","detail":"No district was selected. Ask the user to select a district for location-specific evidence."})
-    model = os.getenv("MISTRAL_MODEL", "mistral-small-latest")
+    model = os.getenv("MISTRAL_MODEL", "ministral-8b-2512")
     body = {
         "model": model,
         "temperature": 0.2,
