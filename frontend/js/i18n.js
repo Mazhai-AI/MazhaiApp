@@ -265,6 +265,7 @@ const TA = {
   "Data services": "தரவு சேவைகள்",
   "Air temperature · Celsius": "காற்றின் வெப்பநிலை · செல்சியஸ்",
   "Map notice": "வரைபட அறிவிப்பு",
+  "Mistral unavailable or not configured": "Mistral கிடைக்கவில்லை அல்லது அமைக்கப்படவில்லை",
   "API unavailable": "API கிடைக்கவில்லை"
 };
 
