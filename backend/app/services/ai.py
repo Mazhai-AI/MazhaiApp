@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
-from .districts import DISTRICTS
+from ..districts import DISTRICTS
 from .weather import get_forecast, get_history, ProviderError
 
 log = logging.getLogger("mazhai.ai")
