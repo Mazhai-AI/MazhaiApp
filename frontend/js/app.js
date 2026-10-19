@@ -193,10 +193,18 @@ async function loadSources(){
   }catch(e){$("#source-cards").innerHTML=`<div class="panel empty-state">${escapeHTML(e.message)}</div>`}
 }
 function renderInlineMarkdown(value){
-  return escapeHTML(value)
-    .replace(/`([^`]+)`/g,"<code>$1</code>")
-    .replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>")
-    .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g,"$1<em>$2</em>");
+  // Some model answers escape Markdown delimiters (`\\*\\*`) before placing
+  // text in JSON. Normalize those delimiters, then escape every text segment
+  // individually so formatting is consistent without trusting model HTML.
+  const source=String(value??"").replace(/\\([*_\x60])/g,"$1");
+  const tokens=source.split(/(\*\*[^*]+?\*\*|__[^_]+?__|\x60[^\x60]+\x60|\*[^*\n]+\*)/g);
+  return tokens.map(token=>{
+    if(/^\*\*[^*]+?\*\*$/.test(token))return "<strong>"+escapeHTML(token.slice(2,-2))+"</strong>";
+    if(/^__[^_]+?__$/.test(token))return "<strong>"+escapeHTML(token.slice(2,-2))+"</strong>";
+    if(/^\x60[^\x60]+\x60$/.test(token))return "<code>"+escapeHTML(token.slice(1,-1))+"</code>";
+    if(/^\*[^*\n]+\*$/.test(token))return "<em>"+escapeHTML(token.slice(1,-1))+"</em>";
+    return escapeHTML(token);
+  }).join("");
 }
 function renderMarkdown(message){
   const lines=String(message??"").replace(/\r\n?/g,"\n").split("\n");
