@@ -184,5 +184,25 @@ class AiTests(unittest.TestCase):
         self.assertIn("## Location and alert", self.sent["messages"][0]["content"])
 
 
+    def test_structured_json_response_returns_normalized_fields(self):
+        payload = {
+            "current_conditions_and_forecast": "Chennai has a forecasted rain window.",
+            "historical_context": "Recent reanalysis shows a wet spell.",
+            "what_to_watch_next": ["Check rainfall updates tomorrow."],
+            "recommended_actions": ["Follow official advisories."],
+            "confidence_and_limitations": "Model values are not station measurements.",
+        }
+        ai.urlopen = self._fake(json.dumps(payload))
+        result = ai.ask_mistral("Give me a place-specific rainfall alert.")
+        self.assertTrue(result["available"])
+        self.assertEqual(result["structured_answer"]["historical_context"], payload["historical_context"])
+        self.assertEqual(self.sent["response_format"], {"type": "json_object"})
+        self.assertIn("## Historical context", result["answer"])
+
+    def test_unsupported_city_does_not_fall_back_to_selected_tamil_nadu_district(self):
+        self.assertIsNone(ai._resolve_district("Will it rain in Bengaluru?", "chennai"))
+        self.assertEqual(ai._resolve_district("Rain outlook for Chennai?", "coimbatore")["id"], "chennai")
+
+
 if __name__ == "__main__":
     unittest.main()
