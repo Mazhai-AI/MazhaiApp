@@ -39,3 +39,10 @@
 .chat-bubble .assistant-answer-section p{font-size:11px;line-height:1.6;white-space:normal;color:#c1d2df;margin:6px 0 10px}
 .chat-bubble .assistant-answer-section ul{padding-left:19px;margin:5px 0 11px}
 .chat-bubble .assistant-answer-section li{font-size:11px;line-height:1.6;white-space:normal;color:#c1d2df;margin:5px 0;padding-left:2px}
+
+
+html[lang="ta"] body{--font:"Noto Sans Tamil","DM Sans",sans-serif;--display:"Noto Sans Tamil","Space Grotesk",sans-serif;line-height:1.65}
+html[lang="ta"] .nav-item{font-size:11px}
+html[lang="ta"] .brand b{letter-spacing:0;font-size:17px}
+html[lang="ta"] .sidebar-label{letter-spacing:.3px}
+html[lang="ta"] .assistant-answer-section p,html[lang="ta"] .assistant-answer-section li{line-height:1.8}
