@@ -1,0 +1,199 @@
+/* Mazhai AI interactive weather explorer */
+.wx-layout{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(275px,.8fr);gap:15px;padding:0 18px 18px}
+.wx-map-column{min-width:0}
+.wx-layout #wx-map{height:470px;min-height:340px;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:#0a1724}
+.wx-legend{padding:12px 2px 0;display:flex;flex-wrap:wrap;gap:10px}
+.wx-legend-note,.wx-muted{font-size:11px;color:var(--muted);line-height:1.55}
+.wx-details{min-width:0;max-height:540px;overflow:auto;border:1px solid var(--border);border-radius:12px;background:linear-gradient(155deg,#102338,#0a1725);padding:17px}
+.wx-detail-content h3{font:600 19px var(--display);margin:4px 0 5px}
+.wx-detail-content h4{font:600 13px var(--display);margin:0 0 6px}
+.wx-panel-eyebrow{font-size:9px;font-weight:700;letter-spacing:1.5px;color:var(--cyan)}
+.wx-empty{text-align:center;padding:30px 7px}
+.wx-empty-icon{display:inline-grid;place-items:center;width:44px;height:44px;border-radius:14px;background:#15354a;color:var(--cyan);font-size:24px}
+.wx-empty h3{margin-top:15px}
+.wx-empty p{font-size:12px;color:var(--muted)}
+.wx-place-list{display:grid;gap:5px;margin-top:13px}
+.wx-place-button{width:100%;display:flex;justify-content:space-between;align-items:center;text-align:left;padding:9px 10px;border:1px solid var(--border);border-radius:8px;background:#0a1725;color:var(--text);font-size:12px}
+.wx-place-button:hover,.wx-place-button:focus-visible{border-color:var(--cyan);background:#123047;outline:none}
+.wx-avatar-card{margin:15px 0;padding:13px;border:1px solid #254258;border-radius:12px;background:radial-gradient(circle at 50% 25%,#19405a 0,#0c1b2b 72%)}
+.wx-avatar-heading{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.wx-avatar-heading h3{font-size:16px}
+.wx-temp{font:600 18px var(--display);color:var(--cyan)}
+.wx-child{width:100%;min-height:205px;border:0;border-radius:10px;background:transparent;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;color:var(--text);overflow:hidden;cursor:pointer}
+.wx-child:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
+.wx-avatar-scene{display:block;width:min(100%,235px);height:188px;position:relative}
+.wx-character{display:block;width:100%;height:100%;overflow:visible;filter:drop-shadow(0 8px 9px #0005)}
+.wx-character-body{transform-box:fill-box;transform-origin:center bottom;animation:wx-character-bob 2.8s ease-in-out infinite}
+.wx-arm{fill:none;stroke:#f3c49b;stroke-width:11;stroke-linecap:round;stroke-linejoin:round;transform-box:fill-box;transform-origin:top center}
+.wx-cross-arm{stroke:#f3c49b;stroke-width:10}
+.wx-child-caption{font-size:10px;color:var(--muted);padding-bottom:3px}
+.wx-rain-drops{animation:wx-rain-fall .8s linear infinite}
+.wx-umbrella{transform-box:fill-box;transform-origin:top center;animation:wx-umbrella-bob 1s ease-in-out infinite}
+.wx-sun{transform-box:fill-box;transform-origin:center;animation:wx-sun-pulse 2s ease-in-out infinite}
+.wx-sweat{animation:wx-sweat-drop 1.2s ease-in-out infinite}
+.wx-cold-puffs{animation:wx-puff 1.5s ease-in-out infinite}
+.wx-mood-heavy-rain .wx-character-body,.wx-mood-cool .wx-character-body{animation:wx-shiver .22s linear infinite}
+.wx-mood-heavy-rain .wx-arm,.wx-mood-cool .wx-arm{animation:wx-cross-shiver .22s linear infinite}
+.wx-mood-hot .wx-arm-right,.wx-mood-very-hot .wx-arm-right{animation:wx-wipe-sweat .8s ease-in-out infinite;transform-origin:top center}
+.wx-mood-hot .wx-arm-left,.wx-mood-very-hot .wx-arm-left{animation:wx-fan-arm .6s ease-in-out infinite;transform-origin:top center}
+.wx-mood-rain .wx-umbrella,.wx-mood-heavy-rain .wx-umbrella{animation:wx-umbrella-bob .7s ease-in-out infinite}
+.wx-mood-drizzle .wx-character-body,.wx-mood-pleasant .wx-character-body{animation:wx-happy-bounce 1.8s ease-in-out infinite}
+.wx-wave-lines{transform-box:fill-box;transform-origin:top left;animation:wx-wave 1s ease-in-out infinite}
+.wx-mood-windy .wx-character-body{animation:wx-wind-lean 1.2s ease-in-out infinite}
+.wx-mood-cloudy .wx-character-body{animation:wx-look-up 2s ease-in-out infinite}
+.wx-mood-neutral .wx-character-body{animation:wx-character-bob 2.8s ease-in-out infinite}
+.wx-speech{margin:8px 0 0;padding:10px 11px;border-radius:10px;background:#17374d;color:#eaf8ff;font-size:12px;line-height:1.55;position:relative}
+.wx-speech:before{content:"";position:absolute;top:-5px;left:50%;width:10px;height:10px;background:#17374d;transform:rotate(45deg)}
+.wx-avatar-tip{font-size:11px;color:#a7c6d8;line-height:1.5;margin:10px 0 0}
+.wx-weather-stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin:13px 0}
+.wx-weather-stats>div{padding:10px;background:#0a1725;border:1px solid var(--border);border-radius:8px;min-width:0}
+.wx-weather-stats span{display:block;color:var(--muted);font-size:10px}
+.wx-weather-stats b{display:block;margin-top:4px;font:600 14px var(--display);overflow-wrap:anywhere}
+.wx-source-note,.wx-data-note{font-size:10px;color:var(--muted);line-height:1.6;margin:8px 0}
+.wx-data-note{padding:9px 10px;border-left:2px solid #b68a4a;background:#241f19;color:#cdbb9f;border-radius:0 7px 7px 0}
+.wx-section-divider{height:1px;background:var(--border);margin:15px 0}
+.wx-boundary-unavailable{margin:10px 0;padding:10px;border:1px dashed #6c5940;border-radius:8px;color:#d5bd99;font-size:11px;line-height:1.55;overflow-wrap:anywhere}
+.wx-boundary-unavailable code{font-size:10px;color:#fff0cf}
+.wx-full{width:100%;justify-content:center;margin-top:8px}
+.wx-loading,.wx-error{text-align:center;padding:30px 8px;color:var(--muted)}
+.wx-spinner{display:inline-block;width:23px;height:23px;border:2px solid #315166;border-top-color:var(--cyan);border-radius:50%;animation:wx-spin .8s linear infinite}
+.wx-error h3{color:var(--text)}
+.wx-error p{font-size:12px}
+#wx-map .leaflet-tooltip{background:#0c1b2b;color:#eaf3fb;border:1px solid #34556c;box-shadow:none}
+#wx-map .leaflet-tooltip:before{border-top-color:#34556c}
+@keyframes wx-character-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+@keyframes wx-shiver{0%,100%{transform:translateX(0) rotate(0)}25%{transform:translateX(-2px) rotate(-1deg)}75%{transform:translateX(2px) rotate(1deg)}}
+@keyframes wx-cross-shiver{0%,100%{transform:translateX(0) rotate(0)}50%{transform:translateX(2px) rotate(3deg)}}
+@keyframes wx-fan-arm{0%,100%{transform:rotate(-12deg)}50%{transform:rotate(18deg)}}
+@keyframes wx-wipe-sweat{0%,100%{transform:rotate(-5deg)}50%{transform:rotate(-48deg) translateY(-5px)}}
+@keyframes wx-umbrella-bob{0%,100%{transform:rotate(-3deg) translateY(0)}50%{transform:rotate(5deg) translateY(-3px)}}
+@keyframes wx-rain-fall{from{transform:translateY(-5px)}to{transform:translateY(10px)}}
+@keyframes wx-sun-pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
+@keyframes wx-sweat-drop{0%,100%{transform:translateY(0);opacity:.6}50%{transform:translateY(6px);opacity:1}}
+@keyframes wx-puff{0%,100%{opacity:.5;transform:translateX(0)}50%{opacity:1;transform:translateX(5px)}}
+@keyframes wx-happy-bounce{0%,100%{transform:translateY(0) rotate(0)}50%{transform:translateY(-5px) rotate(1deg)}}
+@keyframes wx-wave{0%,100%{transform:rotate(-15deg)}50%{transform:rotate(16deg)}}
+@keyframes wx-wind-lean{0%,100%{transform:translateX(0) rotate(0)}50%{transform:translateX(-5px) rotate(-3deg)}}
+@keyframes wx-look-up{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
+@keyframes wx-spin{to{transform:rotate(360deg)}}
+@media(max-width:1050px){.wx-layout{grid-template-columns:1fr}.wx-details{max-height:none}.wx-layout #wx-map{height:390px}}
+@media(max-width:600px){.wx-layout{padding:0 10px 12px;gap:10px}.wx-layout #wx-map{height:300px;min-height:260px}.wx-details{padding:13px}.wx-legend{gap:7px}.wx-legend-note{width:100%}}
+@media(prefers-reduced-motion:reduce){.wx-character,.wx-character-body,.wx-arm,.wx-rain-drops,.wx-umbrella,.wx-sun,.wx-sweat,.wx-cold-puffs,.wx-wave-lines,.wx-spinner{animation:none!important;transition:none!important}}
+/* Mazhai Weather Buddy avatar upgrade: append after the existing weather explorer CSS */
+.wx-avatar-card {
+  overflow: hidden;
+  position: relative;
+  background:
+    radial-gradient(ellipse at 50% 12%, #1d4b65 0, #10283b 45%, #0a1725 100%);
+}
+.wx-avatar-card::after {
+  content: "";
+  position: absolute;
+  width: 190px;
+  height: 190px;
+  left: 50%;
+  top: 112px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  border: 1px solid #4bd5e81c;
+  box-shadow: 0 0 0 16px #4bd5e809, 0 0 0 32px #4bd5e805;
+  pointer-events: none;
+}
+.wx-avatar-heading,
+.wx-child,
+.wx-speech,
+.wx-avatar-tip { position: relative; z-index: 1; }
+.wx-child {
+  min-height: 230px;
+  padding: 5px 0 2px;
+  transition: background .2s ease, transform .2s ease;
+}
+.wx-child:hover { background: #4bd5e808; }
+.wx-child:active { transform: scale(.99); }
+.wx-avatar-scene { width: min(100%, 260px); height: 205px; }
+.wx-character { overflow: visible; transform-origin: center bottom; }
+.wx-character-body { transform-box: fill-box; transform-origin: center bottom; }
+.wx-arm { stroke-width: 10; }
+.wx-arm-left, .wx-arm-right { transform-box: fill-box; }
+.wx-mood-rain .wx-arm-right,
+.wx-mood-heavy-rain .wx-arm-right {
+  animation: wx-hold-umbrella .85s ease-in-out infinite alternate;
+}
+.wx-mood-rain .wx-character-body,
+.wx-mood-drizzle .wx-character-body {
+  animation: wx-rainy-sway 1.8s ease-in-out infinite;
+}
+.wx-mood-heavy-rain .wx-character-body {
+  animation: wx-shiver .2s linear infinite;
+}
+.wx-mood-hot .wx-character-body,
+.wx-mood-very-hot .wx-character-body {
+  animation: wx-hot-sway 1.4s ease-in-out infinite;
+}
+.wx-mood-cool .wx-character-body {
+  animation: wx-shiver .2s linear infinite;
+}
+.wx-mood-windy .wx-arm-left { animation: wx-wind-arm-left .9s ease-in-out infinite alternate; }
+.wx-mood-windy .wx-arm-right { animation: wx-wind-arm-right .75s ease-in-out infinite alternate; }
+.wx-mood-cloudy .wx-arm-right { animation: wx-look-up-arm 1.8s ease-in-out infinite; }
+.wx-mood-pleasant .wx-arm-right,
+.wx-mood-drizzle .wx-arm-right { animation: wx-friendly-wave .7s ease-in-out infinite alternate; }
+.wx-mood-pleasant .wx-wave-lines,
+.wx-mood-drizzle .wx-wave-lines { animation: wx-friendly-wave .7s ease-in-out infinite alternate; }
+.wx-mood-hot .wx-sun,
+.wx-mood-very-hot .wx-sun { animation: wx-sun-pulse 1.4s ease-in-out infinite; }
+.wx-child-caption { letter-spacing: .15px; }
+.wx-speech { border: 1px solid #345a70; box-shadow: 0 5px 18px #0002; }
+@keyframes wx-hold-umbrella {
+  from { transform: rotate(-3deg); }
+  to { transform: rotate(4deg) translateY(-2px); }
+}
+@keyframes wx-rainy-sway {
+  0%, 100% { transform: translateX(0) rotate(0); }
+  50% { transform: translateX(-2px) rotate(-1deg); }
+}
+@keyframes wx-hot-sway {
+  0%, 100% { transform: translateY(0) rotate(0); }
+  50% { transform: translateY(-2px) rotate(1deg); }
+}
+@keyframes wx-wind-arm-left {
+  from { transform: rotate(-5deg); }
+  to { transform: rotate(12deg); }
+}
+@keyframes wx-wind-arm-right {
+  from { transform: rotate(7deg); }
+  to { transform: rotate(-12deg); }
+}
+@keyframes wx-look-up-arm {
+  0%, 100% { transform: rotate(0); }
+  50% { transform: rotate(-7deg) translateY(-2px); }
+}
+@keyframes wx-friendly-wave {
+  from { transform: rotate(-9deg); }
+  to { transform: rotate(12deg); }
+}
+@media (max-width: 600px) {
+  .wx-child { min-height: 220px; }
+  .wx-avatar-scene { height: 190px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wx-avatar-card *, .wx-avatar-card *::before, .wx-avatar-card *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* Avatar fix: rotate arms around the shoulder, not the bbox center */
+.wx-character .wx-arm-grp{transform-box:view-box}
+.wx-character .wx-arm-left{transform-origin:79px 126px}
+.wx-character .wx-arm-right{transform-origin:121px 126px}
+.wx-arm-path{fill:none;stroke:#f3c49b;stroke-width:10;stroke-linecap:round;stroke-linejoin:round}
+.wx-hand{fill:#f3c49b;stroke:#d99770;stroke-width:1.5}
+
+/* hot: wipe forehead with right hand, fan with left */
+.wx-mood-hot .wx-arm-right,.wx-mood-very-hot .wx-arm-right{animation:wx-wipe 1s ease-in-out infinite}
+.wx-mood-hot .wx-arm-left,.wx-mood-very-hot .wx-arm-left{animation:wx-fan-arm .5s ease-in-out infinite}
+@keyframes wx-wipe{0%,100%{transform:rotate(8deg)}50%{transform:rotate(-6deg)}}
+
+/* rain: umbrella is inside the right arm group, so it moves with the hand */
+.wx-mood-rain .wx-arm-right,.wx-mood-heavy-rain .wx-arm-right{animation:wx-hold-umbrella .85s ease-in-out infinite alternate}
