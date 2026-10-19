@@ -210,7 +210,7 @@ class AiTests(unittest.TestCase):
         sent_json = json.loads(self.sent["messages"][-1]["content"])
         self.assertEqual(sent_json["evidence_location"], "Chennai")
         self.assertIn("historical_rainfall_summary", [item["type"] for item in sent_json["evidence"]])
-        self.assertIn("## Location and alert", self.sent["messages"][0]["content"])
+        self.assertIn("JSON object", self.sent["messages"][0]["content"])
 
 
     def test_structured_json_response_returns_normalized_fields(self):
