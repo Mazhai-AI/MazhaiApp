@@ -60,18 +60,65 @@ def _is_number(value):
 
 
 def _resolve_district(question, district_id):
-    """Resolve explicit supported districts; never silently substitute the selected district for a known out-of-scope city."""
+    """Resolve English or Tamil district names, including common colloquial spellings."""
     text = str(question or "")
     unsupported_places = (
         "bengaluru", "bangalore", "hyderabad", "mumbai", "delhi", "new delhi",
         "kolkata", "pune", "kochi", "thiruvananthapuram", "kerala", "karnataka",
         "andhra pradesh", "telangana", "maharashtra", "pondicherry", "puducherry",
         "goa", "jaipur", "lucknow", "ahmedabad", "bhopal",
+        "பெங்களூரு", "பெங்களூர்", "ஹைதராபாத்", "மும்பை", "டெல்லி", "புது டெல்லி",
+        "கொல்கத்தா", "புனே", "கொச்சி", "திருவனந்தபுரம்", "கேரளா", "கர்நாடகா",
+        "ஆந்திரப் பிரதேசம்", "தெலங்கானா", "மகாராஷ்டிரா", "புதுச்சேரி", "கோவா",
+        "ஜெய்ப்பூர்", "லக்னோ", "அகமதாபாத்", "போபால்",
     )
-    if any(re.search(r"(?<![\w])" + re.escape(place) + r"(?![\w])", text, re.IGNORECASE) for place in unsupported_places):
-        return None
+    for place in unsupported_places:
+        matched = re.search(re.escape(place), text, re.IGNORECASE) if any(ord(ch) > 127 for ch in place) else re.search(r"(?<![\w])" + re.escape(place) + r"(?![\w])", text, re.IGNORECASE)
+        if matched:
+            return None
 
     aliases = {
+        "ariyalur": ("அரியலூர்",),
+        "chengalpattu": ("செங்கல்பட்டு",),
+        "chennai": ("சென்னை",),
+        "coimbatore": ("கோயம்புத்தூர்", "கோவை"),
+        "cuddalore": ("கடலூர்",),
+        "dharmapuri": ("தர்மபுரி",),
+        "dindigul": ("திண்டுக்கல்",),
+        "erode": ("ஈரோடு",),
+        "kallakurichi": ("கள்ளக்குறிச்சி",),
+        "kanchipuram": ("காஞ்சிபுரம்",),
+        "kanniyakumari": ("கன்னியாகுமரி",),
+        "karur": ("கரூர்",),
+        "krishnagiri": ("கிருஷ்ணகிரி",),
+        "madurai": ("மதுரை",),
+        "mayiladuthurai": ("மயிலாடுதுறை",),
+        "nagapattinam": ("நாகப்பட்டினம்",),
+        "namakkal": ("நாமக்கல்",),
+        "nilgiris": ("நீலகிரி",),
+        "perambalur": ("பெரம்பலூர்",),
+        "pudukkottai": ("புதுக்கோட்டை",),
+        "ramanathapuram": ("இராமநாதபுரம்", "ராமநாதபுரம்"),
+        "ranipet": ("ராணிப்பேட்டை",),
+        "salem": ("சேலம்",),
+        "sivaganga": ("சிவகங்கை",),
+        "tenkasi": ("தென்காசி",),
+        "thanjavur": ("தஞ்சாவூர்",),
+        "theni": ("தேனி",),
+        "thoothukudi": ("தூத்துக்குடி", "tuticorin"),
+        "tiruchirappalli": ("திருச்சிராப்பள்ளி", "திருச்சி", "trichy"),
+        "tirunelveli": ("திருநெல்வேலி", "நெல்லை"),
+        "tirupathur": ("திருப்பத்தூர்",),
+        "tiruppur": ("திருப்பூர்",),
+        "tiruvallur": ("திருவள்ளூர்",),
+        "tiruvannamalai": ("திருவண்ணாமலை",),
+        "tiruvarur": ("திருவாரூர்",),
+        "vellore": ("வேலூர்",),
+        "viluppuram": ("விழுப்புரம்", "villupuram"),
+        "virudhunagar": ("விருதுநகர்",),
+        "the nilgiris": ("nilgiris",),
+    }
+    legacy_aliases = {
         "tiruchirappalli": ("trichy",),
         "thoothukudi": ("tuticorin",),
         "kanniyakumari": ("kanyakumari",),
@@ -80,10 +127,16 @@ def _resolve_district(question, district_id):
         "viluppuram": ("villupuram",),
     }
     for district in sorted(DISTRICTS, key=lambda item: len(item["name"]), reverse=True):
-        names = (district["name"], district["id"], *aliases.get(district["id"], ()))
-        if any(re.search(r"(?<![\w])" + re.escape(name) + r"(?![\w])", text, re.IGNORECASE) for name in names):
-            return district
+        names = (district["name"], district["id"], *legacy_aliases.get(district["id"], ()), *aliases.get(district["id"], ()))
+        for name in names:
+            if any(ord(ch) > 127 for ch in name):
+                matched = re.search(re.escape(name), text, re.IGNORECASE)
+            else:
+                matched = re.search(r"(?<![\w])" + re.escape(name) + r"(?![\w])", text, re.IGNORECASE)
+            if matched:
+                return district
     return next((item for item in DISTRICTS if item["id"] == str(district_id or "").strip().casefold()), None)
+
 
 def _summarize_forecast(forecast):
     """Create compact, explicit forecast evidence and preserve unknown values as unknown."""
