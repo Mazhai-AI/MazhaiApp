@@ -124,7 +124,8 @@ def _summarize_history(history, requested_start, requested_end, today):
              and _is_number(row.get("precipitation_mm"))]
     max_record = max(valid, key=lambda pair: pair[1]) if valid else (None, None)
     last_week_start = (today - timedelta(days=6)).isoformat()
-    last_week = [value for day, value in valid if last_week_start <= day <= today.isoformat()]
+    last_week = [(day, value) for day, value in valid if last_week_start <= day <= today.isoformat()]
+    recent_max = max(last_week, key=lambda pair: pair[1]) if last_week else (None, None)
     return {
         "source": history.get("source"),
         "requested_range": {"start": requested_start, "end": requested_end},
@@ -136,7 +137,8 @@ def _summarize_history(history, requested_start, requested_end, today):
         "days_at_least_1mm": sum(value >= 1 for _, value in valid),
         "days_at_least_20mm": sum(value >= 20 for _, value in valid),
         "maximum_daily_record": {"date": max_record[0], "precipitation_mm": round(max_record[1], 1) if max_record[1] is not None else None},
-        "last_7_calendar_days_total_mm": round(sum(last_week), 1) if last_week else None,
+        "last_7_calendar_days_total_mm": round(sum(value for _, value in last_week), 1) if last_week else None,
+        "last_7_calendar_days_max_daily_record": {"date": recent_max[0], "precipitation_mm": round(recent_max[1], 1) if recent_max[1] is not None else None},
         "stale": bool(history.get("stale")),
         "retrieved_at": history.get("retrieved_at"),
     }
@@ -182,8 +184,8 @@ def _build_rainfall_alert(forecast_summary, history_summary=None):
         level = "Routine"
 
     recent_total = history_summary.get("last_7_calendar_days_total_mm") if history_summary else None
-    recent_max = (history_summary.get("maximum_daily_record") or {}).get("precipitation_mm") if history_summary else None
-    recent_max_date = (history_summary.get("maximum_daily_record") or {}).get("date") if history_summary else None
+    recent_max = (history_summary.get("last_7_calendar_days_max_daily_record") or {}).get("precipitation_mm") if history_summary else None
+    recent_max_date = (history_summary.get("last_7_calendar_days_max_daily_record") or {}).get("date") if history_summary else None
     has_recent_heavy_rain = (_is_number(recent_total) and recent_total >= 50) or (_is_number(recent_max) and recent_max >= 20)
     upcoming_rain = (_is_number(rain_48h) and rain_48h >= 5) or (_is_number(max_daily) and max_daily >= 5)
     history_modifier = False
