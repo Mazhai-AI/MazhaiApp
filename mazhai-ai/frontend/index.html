@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#07111f">
+  <meta name="description" content="Evidence-grounded rainfall intelligence for Tamil Nadu.">
+  <title>Mazhai AI — Tamil Nadu Rainfall Intelligence</title>
+  <link rel="preconnect" href="https://unpkg.com">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap">
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="#" aria-label="Mazhai AI home"><span class="brand-mark">ம</span><span><b>Mazhai<span class="brand-ai"> AI</span></b><small>RAINFALL INTELLIGENCE</small></span></a>
+    <div class="sidebar-label">WORKSPACE</div>
+    <nav class="nav-list" aria-label="Main navigation">
+      <button class="nav-item active" data-view="overview"><span>◫</span> Overview</button>
+      <button class="nav-item" data-view="live"><span>◉</span> Live weather</button>
+      <button class="nav-item" data-view="history"><span>▥</span> Rainfall history</button>
+      <button class="nav-item" data-view="districts"><span>⌖</span> District explorer</button>
+      <button class="nav-item" data-view="forecast"><span>↗</span> Forecast &amp; risk</button>
+      <button class="nav-item" data-view="analytics"><span>▤</span> Rainfall analytics</button>
+      <button class="nav-item" data-view="assistant"><span>✳</span> AI assistant <i class="new-dot"></i></button>
+    </nav>
+    <div class="sidebar-label sources-label">SYSTEM</div>
+    <nav class="nav-list">
+      <button class="nav-item" data-view="sources"><span>◎</span> Data sources</button>
+      <button class="nav-item" data-view="settings"><span>⚙</span> Settings</button>
+    </nav>
+    <div class="sidebar-bottom"><div class="system-status"><span class="status-dot"></span><span><b>Data services</b><small id="sidebar-status">Checking connection…</small></span></div><div class="sidebar-foot">Built for Tamil Nadu <span>·</span> v1.0</div></div>
+  </aside>
+  <main class="main-area">
+    <header class="topbar">
+      <button class="mobile-menu" id="mobile-menu" aria-label="Toggle navigation">☰</button>
+      <div class="breadcrumb"><span>Workspace</span><span class="crumb-sep">/</span><b id="page-title">Overview</b></div>
+      <div class="top-actions"><span class="today-label" id="today-label"></span><button class="icon-btn" id="refresh-btn" title="Refresh selected data" aria-label="Refresh data">↻</button><div class="avatar">TN</div></div>
+    </header>
+    <div class="page-content">
+      <section class="view active" id="view-overview">
+        <div class="page-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span> TAMIL NADU · WEATHER DESK</div><h1>Rainfall overview<span class="heading-period"> / statewide</span></h1><p class="muted">A grounded view of what’s happening now and what may come next.</p></div><div class="heading-controls"><label class="sr-only" for="district-select">Select district</label><select id="district-select" class="select-control"></select><button class="btn btn-primary" id="load-overview">Update view <span>↗</span></button></div></div>
+        <div class="notice-bar"><span class="notice-icon">i</span><span>District weather uses representative coordinates and gridded model data—not direct rain-gauge readings. Check official IMD alerts for safety decisions.</span><a href="https://mausam.imd.gov.in/" target="_blank" rel="noreferrer">IMD advisories ↗</a></div>
+        <div class="metric-grid">
+          <article class="metric-card"><div class="metric-top"><span>Current temperature</span><span class="metric-icon">♧</span></div><div class="metric-value" id="metric-temp">—<small>°C</small></div><div class="metric-foot" id="metric-temp-foot">Select a district to load</div></article>
+          <article class="metric-card"><div class="metric-top"><span>Current precipitation</span><span class="metric-icon cyan">⌁</span></div><div class="metric-value" id="metric-rain">—<small> mm</small></div><div class="metric-foot">Provider current-condition field</div></article>
+          <article class="metric-card"><div class="metric-top"><span>Humidity</span><span class="metric-icon">◌</span></div><div class="metric-value" id="metric-humidity">—<small>%</small></div><div class="metric-foot">Relative humidity</div></article>
+          <article class="metric-card"><div class="metric-top"><span>Next 7 days</span><span class="metric-icon teal">↗</span></div><div class="metric-value" id="metric-seven-day">—<small> mm</small></div><div class="metric-foot" id="metric-seven-foot">Forecast total when available</div></article>
+        </div>
+        <div class="content-grid overview-grid">
+          <article class="panel map-panel"><div class="panel-header"><div><h2>District weather map</h2><p>Choose a marker to inspect a district</p></div><span class="panel-tag"><span class="live-dot"></span> MODEL GRID</span></div><div id="tn-map" class="map-canvas" aria-label="Map of Tamil Nadu districts"></div><div class="map-legend"><span><i class="legend-dot rain-high"></i> Higher forecast</span><span><i class="legend-dot rain-mid"></i> Some forecast rain</span><span><i class="legend-dot rain-low"></i> Low / no forecast</span><span><i class="legend-dot rain-na"></i> No data</span></div></article>
+          <article class="panel forecast-panel"><div class="panel-header"><div><h2>7-day outlook</h2><p id="outlook-location">Selected district</p></div><button class="text-btn" data-go="forecast">Full forecast ↗</button></div><div id="outlook-list" class="outlook-list"><div class="empty-state compact">Choose a district to load forecast data.</div></div><div class="panel-footnote" id="forecast-source-note">Waiting for provider data</div></article>
+        </div>
+        <div class="content-grid lower-grid">
+          <article class="panel chart-panel"><div class="panel-header"><div><h2>Recent rainfall history</h2><p>Daily precipitation · selected district</p></div><span class="unit-pill">mm / day</span></div><div class="chart-wrap"><canvas id="history-chart" aria-label="Recent rainfall history chart"></canvas><div class="chart-empty" id="history-chart-empty">Load historical data to see the trend.</div></div></article>
+          <article class="panel insight-panel"><div class="panel-header"><div><h2>Rainfall signal</h2><p>Evidence from the current provider forecast</p></div><span class="sparkle">✳</span></div><div id="signal-content" class="signal-content"><div class="signal-empty">Insights appear when forecast data is available.</div></div><button class="btn btn-secondary full-btn" data-go="assistant">Ask the AI assistant <span>↗</span></button></article>
+        </div>
+        <div class="foot-disclaimer">Mazhai AI is an analytical aid, not an official warning system. Data source and retrieval time are shown with each result.</div>
+      </section>
+
+      <section class="view" id="view-live">
+        <div class="page-heading"><div><div class="eyebrow">OBSERVATIONS</div><h1>Live weather</h1><p class="muted">Current conditions from the selected weather provider.</p></div><div class="heading-controls"><select class="select-control district-select-sync" aria-label="District"></select><button class="btn btn-primary" data-refresh="forecast">Refresh conditions ↻</button></div></div>
+        <div id="live-content" class="detail-grid"><div class="panel empty-state">Choose a district and load its forecast.</div></div>
+      </section>
+
+      <section class="view" id="view-history">
+        <div class="page-heading"><div><div class="eyebrow">OBSERVED PATTERNS</div><h1>Rainfall history</h1><p class="muted">Daily historical precipitation from gridded reanalysis data.</p></div></div>
+        <div class="panel filters-panel"><div class="field"><label for="history-district">District</label><select id="history-district" class="select-control district-select-sync"></select></div><div class="field"><label for="history-start">Start date</label><input id="history-start" type="date" class="input-control"></div><div class="field"><label for="history-end">End date</label><input id="history-end" type="date" class="input-control"></div><button class="btn btn-primary" id="load-history">Load history ↗</button></div>
+        <div id="history-summary" class="metric-grid history-metrics"></div>
+        <article class="panel chart-panel history-full"><div class="panel-header"><div><h2>Daily precipitation</h2><p id="history-chart-subtitle">Choose a date range</p></div><button class="btn btn-secondary" id="export-csv">Export CSV ↓</button></div><div class="chart-wrap tall"><canvas id="history-detail-chart"></canvas><div class="chart-empty" id="history-detail-empty">No data loaded yet.</div></div><div id="history-source" class="panel-footnote"></div></article>
+      </section>
+
+      <section class="view" id="view-districts">
+        <div class="page-heading"><div><div class="eyebrow">GEOGRAPHIC DIRECTORY</div><h1>District explorer</h1><p class="muted">Explore the 38 districts and inspect available weather coverage.</p></div><div class="heading-controls"><input class="input-control" id="district-search" placeholder="Search districts…" aria-label="Search districts"></div></div>
+        <div class="district-count-row"><span id="district-count">38 districts</span><span class="muted">Representative coordinates · station coverage varies</span></div><div id="district-grid" class="district-grid"></div>
+      </section>
+
+      <section class="view" id="view-forecast">
+        <div class="page-heading"><div><div class="eyebrow">FORWARD LOOK</div><h1>Forecast &amp; risk</h1><p class="muted">Provider forecasts, recent accumulation context, and transparent limitations.</p></div><div class="heading-controls"><select class="select-control district-select-sync" aria-label="District"></select><button class="btn btn-primary" data-refresh="forecast">Refresh forecast ↻</button></div></div>
+        <div id="forecast-detail" class="panel detail-panel"><div class="empty-state">Select a district to inspect its forecast.</div></div>
+        <div class="risk-note"><b>Risk interpretation</b><p>This release does not issue flood forecasts or official warnings. Rainfall totals alone are not sufficient to infer flooding. Check current IMD advisories and local disaster-management instructions.</p><a href="https://mausam.imd.gov.in/" target="_blank" rel="noreferrer">Open IMD official weather service ↗</a></div>
+      </section>
+
+      <section class="view" id="view-analytics">
+        <div class="page-heading"><div><div class="eyebrow">PATTERNS &amp; COMPARISONS</div><h1>Rainfall analytics</h1><p class="muted">Compare grid-based precipitation estimates across district reference points.</p></div></div>
+        <div class="panel filters-panel"><div class="field"><label for="analytics-start">Start date</label><input id="analytics-start" type="date" class="input-control"></div><div class="field"><label for="analytics-end">End date</label><input id="analytics-end" type="date" class="input-control"></div><button class="btn btn-primary" id="load-comparison">Compare districts ↗</button></div>
+        <div class="panel chart-panel"><div class="panel-header"><div><h2>District comparison</h2><p>Totals for selected period · mm</p></div></div><div class="chart-wrap tall"><canvas id="comparison-chart"></canvas><div class="chart-empty" id="comparison-empty">Choose a date range and run comparison.</div></div><div id="comparison-status" class="panel-footnote"></div></div><div id="comparison-table-wrap" class="panel table-panel"></div>
+      </section>
+
+      <section class="view" id="view-assistant">
+        <div class="page-heading"><div><div class="eyebrow">EVIDENCE-GROUNDED ANALYSIS</div><h1>AI weather assistant</h1><p class="muted">Ask about forecasts and historical patterns. Answers use retrieved evidence when available.</p></div></div>
+        <div class="assistant-layout"><article class="panel assistant-panel"><div class="assistant-head"><div class="assistant-symbol">✳</div><div><b>Mazhai intelligence</b><small id="ai-status">Checking Mistral configuration when you ask</small></div><span class="panel-tag">MISTRAL AI</span></div><div id="chat-messages" class="chat-messages"><div class="chat-message assistant-message"><div class="chat-avatar">✳</div><div class="chat-bubble"><b>Vanakkam! I’m Mazhai AI.</b><p>I can explain retrieved forecasts and historical precipitation data. Select a district and ask a question. If the AI key is not configured, I’ll tell you rather than invent an answer.</p></div></div></div><div class="suggested-questions"><button data-question="Summarize the current forecast and its uncertainty for the selected district.">Summarize this forecast</button><button data-question="Compare the forecast with historical rainfall context for the selected district.">Forecast vs history</button><button data-question="What information is missing before assessing flood risk here?">What data is missing?</button></div><form id="chat-form" class="chat-form"><label class="sr-only" for="chat-input">Ask Mazhai AI</label><textarea id="chat-input" rows="1" maxlength="1200" placeholder="Ask about rainfall patterns, forecasts, or uncertainty…"></textarea><button class="send-btn" type="submit" aria-label="Send question">↑</button></form><div class="assistant-disclaimer">AI-generated explanations can be incomplete. Verify safety decisions with official authorities.</div></article><aside class="panel context-panel"><h2>Analysis context</h2><p>Responses are grounded in data retrieved by this application.</p><div class="context-row"><span>Selected district</span><b id="ai-context-district">Chennai</b></div><div class="context-row"><span>Weather source</span><b>Open-Meteo</b></div><div class="context-row"><span>Historical source</span><b>Reanalysis data</b></div><div class="context-row"><span>Official warnings</span><b class="not-connected">Not integrated</b></div><div class="context-divider"></div><p class="muted small">Mistral is used to explain evidence, not to generate numerical weather forecasts independently.</p></aside></div>
+      </section>
+
+      <section class="view" id="view-sources">
+        <div class="page-heading"><div><div class="eyebrow">PROVENANCE &amp; FRESHNESS</div><h1>Data sources</h1><p class="muted">Configured providers, coverage limitations, and local ingestion status.</p></div><button class="btn btn-secondary" id="reload-sources">Refresh status ↻</button></div>
+        <div id="source-cards" class="source-grid"></div><div class="panel table-panel"><div class="panel-header"><div><h2>Stored historical data</h2><p>Records are persisted locally after successful retrieval.</p></div></div><div id="stored-source-table"></div></div>
+      </section>
+
+      <section class="view" id="view-settings">
+        <div class="page-heading"><div><div class="eyebrow">PREFERENCES</div><h1>Settings</h1><p class="muted">Configure this browser’s display preferences.</p></div></div>
+        <div class="panel settings-panel"><div class="setting-row"><div><b>Default district</b><p>District loaded when you open the application.</p></div><select class="select-control" id="default-district"></select></div><div class="setting-row"><div><b>Units</b><p>Rainfall is shown in millimeters and temperature in Celsius.</p></div><span class="unit-pill">mm · °C</span></div><div class="setting-row"><div><b>Data refresh</b><p>Weather responses are cached briefly to limit upstream requests.</p></div><span class="unit-pill">15 min cache</span></div><div class="setting-row"><div><b>Theme</b><p>Current theme is designed for low-glare monitoring.</p></div><span class="unit-pill">Dark</span></div><button class="btn btn-primary" id="save-settings">Save preferences</button><span id="settings-saved" class="muted small"></span></div>
+      </section>
+      <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    </div>
+  </main>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script type="module" src="/js/app.js"></script>
+</body>
+</html>
