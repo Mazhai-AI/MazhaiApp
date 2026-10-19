@@ -296,7 +296,12 @@ async function sendQuestion(question){
     renderAssistantReply(bubble,result,typeof reply==="string"&&reply?reply:"The assistant returned no answer.");
     if(result.available){state.chatHistory.push({role:"user",content:text.slice(0,1400)},{role:"assistant",content:String(reply??"").slice(0,1400)});state.chatHistory=state.chatHistory.slice(-12)}
     $("#ai-status").textContent=result.available?`Connected · ${result.model}`:"Mistral unavailable or not configured";
-  }catch(e){bubble.textContent=e.name==="AbortError"?"The request took too long. Please try again.":`I couldn't complete this request: ${e.message}`}
+  }catch(e){
+    const language=getLanguage();
+    bubble.textContent=e.name==="AbortError"
+      ? (language==="ta"?"கோரிக்கை முடிவடைய அதிக நேரம் எடுத்தது. மீண்டும் முயற்சிக்கவும்.":"The request took too long. Please try again.")
+      : (language==="ta"?("இந்தக் கோரிக்கையை முடிக்க முடியவில்லை: "+e.message):("I couldn't complete this request: "+e.message));
+  }
   finally{clearTimeout(timer);state.asking=false;if(submit)submit.disabled=false}
 }
 function addChat(role,message){
