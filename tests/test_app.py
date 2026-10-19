@@ -366,7 +366,8 @@ class AiTests(unittest.TestCase):
         structured = ai._normalize_structured_answer(raw)
         self.assertIsNotNone(structured)
         markdown = ai._structured_answer_markdown(structured)
-        self.assertIn("could not be formatted", markdown)
+        self.assertTrue(structured["_parse_error"])
+        self.assertIn("partial response", markdown)
         self.assertFalse(markdown.lstrip().startswith("{"))
 
     def test_reliable_prompt_prioritizes_follow_up_intent_and_evidence(self):
