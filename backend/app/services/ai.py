@@ -74,6 +74,14 @@ def _resolve_district(question, district_id):
         names = (district["name"], district["id"], *aliases.get(district["id"], ()))
         if any(re.search(r"(?<![\w])" + re.escape(name) + r"(?![\w])", text, re.IGNORECASE) for name in names):
             return district
+    unsupported_places = (
+        "bengaluru", "bangalore", "hyderabad", "mumbai", "delhi", "new delhi",
+        "kolkata", "pune", "kochi", "thiruvananthapuram", "kerala", "karnataka",
+        "andhra pradesh", "telangana", "maharashtra", "karnataka", "pondicherry",
+        "puducherry", "goa", "jaipur", "lucknow", "ahmedabad", "bhopal",
+    )
+    if any(re.search(r"(?<![\w])" + re.escape(place) + r"(?![\w])", text, re.IGNORECASE) for place in unsupported_places):
+        return None
     return next((item for item in DISTRICTS if item["id"] == str(district_id or "").strip().casefold()), None)
 
 
