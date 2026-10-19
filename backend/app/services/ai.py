@@ -589,9 +589,13 @@ def _build_system_prompt(now_ist, language="en"):
 
 
 def ask_mistral(question, district_id=None, start=None, end=None, history=None, language="en"):
+    language = "ta" if language == "ta" else "en"
     api_key = os.getenv("MISTRAL_API_KEY", "").strip()
     if not api_key:
-        return {"available": False, "message": "Mistral AI is not configured. Set MISTRAL_API_KEY in the backend environment to enable evidence-grounded analysis."}
+        message = ("Mistral AI அமைக்கப்படவில்லை. ஆதார அடிப்படையிலான பகுப்பாய்வை இயக்க backend சூழலில் MISTRAL_API_KEY அமைக்கவும்."
+                   if language == "ta" else
+                   "Mistral AI is not configured. Set MISTRAL_API_KEY in the backend environment to enable evidence-grounded analysis.")
+        return {"available": False, "language": language, "message": message}
 
     now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
     chosen_district = _resolve_district(question, district_id)
@@ -665,24 +669,65 @@ def ask_mistral(question, district_id=None, start=None, end=None, history=None, 
     body = {"model": model, "temperature": 0.2, "max_tokens": 1200, "response_format": {"type": "json_object"}, "messages": messages}
     req = Request(MISTRAL_URL, data=json.dumps(body).encode(), headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"})
     try:
-        with urlopen(req, timeout=20) as response:
-            result = json.loads(response.read().decode())
-        raw_answer = _extract_text(result["choices"][0]["message"]["content"])
+        def call_model(messages_to_send):
+            request_body = {**body, "messages": messages_to_send}
+            request = Request(
+                MISTRAL_URL,
+                data=json.dumps(request_body, ensure_ascii=False).encode(),
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            )
+            with urlopen(request, timeout=20) as response:
+                payload = json.loads(response.read().decode())
+            return _extract_text(payload["choices"][0]["message"]["content"])
+
+        raw_answer = call_model(messages)
         if not raw_answer:
             log.warning("Mistral returned an empty answer (model=%s)", model)
-            return {"available": False, "message": "Mistral returned an empty answer. Please try rephrasing your question."}
+            message = ("Mistral பதில் வழங்கவில்லை. உங்கள் கேள்வியை வேறு விதமாகக் கேட்டு மீண்டும் முயற்சிக்கவும்."
+                       if language == "ta" else
+                       "Mistral returned an empty answer. Please try rephrasing your question.")
+            return {"available": False, "language": language, "message": message}
+
         structured_answer = _normalize_structured_answer(raw_answer)
-        answer = _structured_answer_markdown(structured_answer) if structured_answer else raw_answer
+        answer_candidate = structured_answer if structured_answer is not None else raw_answer
+        language_retry_used = False
+        if _answer_language_mismatch(answer_candidate, language):
+            language_retry_used = True
+            retry_messages = messages + [
+                {"role": "assistant", "content": raw_answer[:5000]},
+                {"role": "user", "content": _language_retry_instruction(language)},
+            ]
+            try:
+                retry_answer = call_model(retry_messages)
+                retry_structured = _normalize_structured_answer(retry_answer) if retry_answer else None
+            except (KeyError, IndexError, TypeError, ValueError) as retry_exc:
+                log.warning("Mistral selected-language retry failed: %r", retry_exc)
+                retry_answer, retry_structured = "", None
+
+            retry_candidate = retry_structured if retry_structured is not None else retry_answer
+            if retry_answer and retry_structured is not None and not _answer_language_mismatch(retry_candidate, language):
+                raw_answer = retry_answer
+                structured_answer = retry_structured
+            else:
+                # Enforce the user's selected language even if the provider ignores the retry instruction.
+                structured_answer = _language_fallback(language)
+
+        if structured_answer is not None:
+            answer = _structured_answer_markdown(structured_answer)
+        else:
+            answer = raw_answer
         response = {
             "available": True,
+            "language": language,
             "model": model,
             "answer": answer,
             "location": location_name,
             "alert": alert,
             "historical_context_available": any(summary is not None and summary.get("valid_daily_values", 0) > 0 for summary in (history_summary, alert_history_summary)),
             "evidence_types": [item["type"] for item in evidence],
+            "language_retry_used": language_retry_used,
         }
-        if structured_answer:
+        if structured_answer is not None:
             response["structured_answer"] = structured_answer
         return response
     except HTTPError as exc:
@@ -692,10 +737,16 @@ def ask_mistral(question, district_id=None, start=None, end=None, history=None, 
         except Exception:
             pass
         log.error("Mistral HTTP %s (model=%s): %s", exc.code, model, detail)
-        return {"available": False, "message": _user_message(exc.code)}
+        return {"available": False, "language": language, "message": _user_message(exc.code, language)}
     except (URLError, TimeoutError) as exc:
         log.error("Mistral network error: %s", exc)
-        return {"available": False, "message": "Could not reach Mistral (network or timeout). Weather and history features remain available."}
+        message = ("Mistral சேவையை அணுக முடியவில்லை. வானிலை மற்றும் வரலாற்று அம்சங்கள் தொடர்ந்து கிடைக்கும்."
+                   if language == "ta" else
+                   "Could not reach Mistral (network or timeout). Weather and history features remain available.")
+        return {"available": False, "language": language, "message": message}
     except (KeyError, IndexError, TypeError, ValueError) as exc:
         log.error("Unexpected Mistral response: %r", exc)
-        return {"available": False, "message": "Mistral returned an unexpected response. Weather and history features remain available."}
+        message = ("Mistral எதிர்பாராத பதிலை வழங்கியது. வானிலை மற்றும் வரலாற்று அம்சங்கள் தொடர்ந்து கிடைக்கும்."
+                   if language == "ta" else
+                   "Mistral returned an unexpected response. Weather and history features remain available.")
+        return {"available": False, "language": language, "message": message}
