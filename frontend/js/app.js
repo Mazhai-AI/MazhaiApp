@@ -1,7 +1,7 @@
 const API = "/api";
 const $ = (selector, root=document) => root.querySelector(selector);
 const $$ = (selector, root=document) => [...root.querySelectorAll(selector)];
-const state = { districts: [], districtId: localStorage.getItem("mazhai-district") || "chennai", forecast: null, history: null, map: null, markers: new Map(), historyChart: null, detailChart: null, comparisonChart: null, lastView: "overview" };
+const state = { districts: [], districtId: localStorage.getItem("mazhai-district") || "chennai", forecast: null, history: null, map: null, markers: new Map(), historyChart: null, detailChart: null, comparisonChart: null, lastView: "overview", chatHistory: [], asking: false };
 const views = ["overview","live","history","districts","forecast","analytics","assistant","sources","settings"];
 const today = new Date();
 const dateISO = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
@@ -12,7 +12,7 @@ function toast(message){const el=$("#toast");el.textContent=message;el.classList
 async function api(path, options={}) {
   const response=await fetch(`${API}${path}`,{headers:{"Content-Type":"application/json",...(options.headers||{})},...options});
   let data; try{data=await response.json()}catch{data={detail:"Invalid server response"}}
-  if(!response.ok){const detail=typeof data.detail==="string"?data.detail:(data.detail?.message||data.message||`Request failed (${response.status})`);throw new Error(detail)}
+  if(!response.ok){const detail=typeof data.detail==="string"?data.detail:Array.isArray(data.detail)?data.detail.map(x=>x.msg).join("; "):(data.detail?.message||data.message||`Request failed (${response.status})`);throw new Error(detail)}
   return data;
 }
 function showView(name){
@@ -37,6 +37,7 @@ function populateDistrictSelects(){
 }
 function selectDistrict(id){
   if(!district(id)) return;
+  if(state.districtId!==id)state.chatHistory=[];
   state.districtId=id;localStorage.setItem("mazhai-district",id);
   $("#district-select").value=id;
   $$(".district-select-sync").forEach(s=>s.value=id);
@@ -192,16 +193,23 @@ async function loadSources(){
   }catch(e){$("#source-cards").innerHTML=`<div class="panel empty-state">${escapeHTML(e.message)}</div>`}
 }
 async function sendQuestion(question){
-  const input=$("#chat-input"),text=question||input.value.trim();if(!text)return;
+  const input=$("#chat-input"),text=(question||input.value).trim();if(!text||state.asking)return;
+  state.asking=true;
+  const submit=$("#chat-form button[type=submit]");if(submit)submit.disabled=true;
   addChat("user",text);input.value="";
   const placeholder=addChat("assistant","Checking retrieved evidence…");
+  const bubble=placeholder.querySelector(".chat-bubble");
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),70000);
   try{
-    const body={question:text,district_id:state.districtId};
-    const start=$("#history-start").value,end=$("#history-end").value;if(start&&end){body.start=start;body.end=end}
-    const result=await api("/ai/ask",{method:"POST",body:JSON.stringify(body)});
-    placeholder.querySelector(".chat-bubble").textContent=result.available?result.answer:result.message;
+    const body={question:text,district_id:state.districtId,history:state.chatHistory.slice(-8)};
+    const start=$("#history-start").value,end=$("#history-end").value;if(start&&end&&end>=start){body.start=start;body.end=end}
+    const result=await api("/ai/ask",{method:"POST",body:JSON.stringify(body),signal:controller.signal});
+    const reply=result.available?result.answer:result.message;
+    bubble.textContent=typeof reply==="string"&&reply?reply:"The assistant returned no answer.";
+    if(result.available){state.chatHistory.push({role:"user",content:text},{role:"assistant",content:reply});state.chatHistory=state.chatHistory.slice(-12)}
     $("#ai-status").textContent=result.available?`Connected · ${result.model}`:"Mistral unavailable or not configured";
-  }catch(e){placeholder.querySelector(".chat-bubble").textContent=`I couldn't complete this request: ${e.message}`}
+  }catch(e){bubble.textContent=e.name==="AbortError"?"The request took too long. Please try again.":`I couldn't complete this request: ${e.message}`}
+  finally{clearTimeout(timer);state.asking=false;if(submit)submit.disabled=false}
 }
 function addChat(role,message){
   const wrapper=document.createElement("div");wrapper.className=`chat-message ${role==="user"?"user-message":"assistant-message"}`;

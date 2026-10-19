@@ -1,19 +1,29 @@
-from contextlib import asynccontextmanager
-from datetime import datetime, timezone
-from pathlib import Path
+import logging
 import os
-from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
-from .districts import DISTRICTS
-from .database.db import init_db
-from .services.weather import get_forecast, get_history, get_source_status, ProviderError
-from .services.ai import ask_mistral
+import time
+from collections import defaultdict, deque
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
+from datetime import date, datetime, timezone
+from pathlib import Path
+from typing import Literal
 
+from dotenv import load_dotenv
+
+# Load .env first: db.py and weather.py read MAZHAI_DB_PATH / timeouts / TTL at import time.
 ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(ROOT / ".env")
+
+from fastapi import FastAPI, HTTPException, Query, Request  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
+from pydantic import BaseModel, Field  # noqa: E402
+from .districts import DISTRICTS  # noqa: E402
+from .database.db import init_db  # noqa: E402
+from .services.weather import get_forecast, get_history, get_source_status, ProviderError  # noqa: E402
+from .services.ai import ask_mistral  # noqa: E402
+
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -24,11 +34,31 @@ app = FastAPI(title="Mazhai AI API", version="1.0.0", description="Tamil Nadu ra
 origins = [x.strip() for x in os.getenv("CORS_ORIGINS", "http://127.0.0.1:8001,http://localhost:8001").split(",") if x.strip()]
 app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=False, allow_methods=["GET","POST"], allow_headers=["Content-Type"])
 
+class ChatTurn(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=1500)
+
 class AskRequest(BaseModel):
     question: str = Field(min_length=3, max_length=1200)
     district_id: str | None = None
     start: str | None = None
     end: str | None = None
+    history: list[ChatTurn] = Field(default_factory=list, max_length=12)
+
+# Simple in-memory sliding-window limiter for the costly AI endpoint (per client IP).
+AI_RATE_LIMIT = int(os.getenv("AI_RATE_LIMIT_PER_MIN", "10"))
+_ai_hits = defaultdict(deque)
+
+def _check_ai_rate(client_id):
+    if AI_RATE_LIMIT <= 0:
+        return
+    now = time.monotonic()
+    hits = _ai_hits[client_id]
+    while hits and now - hits[0] > 60:
+        hits.popleft()
+    if len(hits) >= AI_RATE_LIMIT:
+        raise HTTPException(429, "Too many AI requests. Please wait a minute and try again.")
+    hits.append(now)
 
 @app.get("/api/health")
 def health():
@@ -84,26 +114,46 @@ def source_status():
     return get_source_status()
 
 @app.post("/api/ai/ask")
-def ai_ask(body: AskRequest):
-    if body.district_id and not any(d["id"] == body.district_id.casefold() for d in DISTRICTS):
+def ai_ask(body: AskRequest, request: Request):
+    _check_ai_rate(request.client.host if request.client else "unknown")
+    district_id = body.district_id.strip().casefold() if body.district_id else None
+    if district_id and not any(d["id"] == district_id for d in DISTRICTS):
         raise HTTPException(404, "District not found")
     if bool(body.start) != bool(body.end):
         raise HTTPException(400, "Provide both start and end dates for historical context.")
-    return ask_mistral(body.question, body.district_id.casefold() if body.district_id else None, body.start, body.end)
+    if body.start and body.end:
+        try:
+            if date.fromisoformat(body.end) < date.fromisoformat(body.start):
+                raise HTTPException(400, "End date must be on or after start date.")
+        except ValueError:
+            raise HTTPException(400, "Dates must use YYYY-MM-DD format")
+    return ask_mistral(body.question.strip(), district_id, body.start, body.end, [t.model_dump() for t in body.history])
 
 @app.get("/api/analytics/district-comparison")
 def comparison(start: str = Query(...), end: str = Query(...)):
-    # Keep requests bounded and report partial provider failures instead of fabricating values.
-    results=[]
-    for district in DISTRICTS:
+    # Validate once so a bad range gives one clear 400 instead of 38 identical failures.
+    try:
+        s_d, e_d = date.fromisoformat(start), date.fromisoformat(end)
+    except ValueError:
+        raise HTTPException(400, "Dates must use YYYY-MM-DD format")
+    if e_d < s_d:
+        raise HTTPException(400, "End date must be on or after start date")
+    if (e_d - s_d).days > 3660:
+        raise HTTPException(400, "Date range cannot exceed 10 years")
+
+    def fetch(district):
         try:
-            data=get_history(district["id"],start,end)
-            values=[r["precipitation_mm"] for r in data["records"] if isinstance(r.get("precipitation_mm"),(int,float))]
-            results.append({"district_id":district["id"],"district":district["name"],"total_mm":round(sum(values),2) if values else None,"valid_days":len(values),"source":data["source"],"error":None})
+            data = get_history(district["id"], start, end)
+            values = [r["precipitation_mm"] for r in data["records"] if isinstance(r.get("precipitation_mm"), (int, float))]
+            return {"district_id": district["id"], "district": district["name"], "total_mm": round(sum(values), 2) if values else None, "valid_days": len(values), "source": data["source"], "error": None}
         except Exception as exc:
-            results.append({"district_id":district["id"],"district":district["name"],"total_mm":None,"valid_days":0,"source":None,"error":exc.__class__.__name__})
-    valid=[r for r in results if r["total_mm"] is not None]
-    return {"start":start,"end":end,"districts":results,"successful_districts":len(valid),"note":"Totals are grid/reanalysis estimates at representative coordinates, not official district-wide rainfall totals."}
+            return {"district_id": district["id"], "district": district["name"], "total_mm": None, "valid_days": 0, "source": None, "error": exc.__class__.__name__}
+
+    # Bounded concurrency: much faster than 38 sequential calls, gentle on the upstream rate limit.
+    with ThreadPoolExecutor(max_workers=int(os.getenv("COMPARISON_WORKERS", "6"))) as pool:
+        results = list(pool.map(fetch, DISTRICTS))
+    valid = [r for r in results if r["total_mm"] is not None]
+    return {"start": start, "end": end, "districts": results, "successful_districts": len(valid), "note": "Totals are grid/reanalysis estimates at representative coordinates, not official district-wide rainfall totals."}
 
 FRONTEND = ROOT / "frontend"
 if FRONTEND.exists():

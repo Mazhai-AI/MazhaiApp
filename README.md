@@ -59,7 +59,7 @@ MISTRAL_API_KEY=your_server_side_key
 MISTRAL_MODEL=ministral-8b-2512
 ```
 
-Never put the key in frontend files, browser storage, or a committed repository. The application starts without this key and shows a clear unavailable state.
+Never put the key in frontend files, browser storage, or a committed repository. Leave `MAZHAI_DB_PATH` unset for local runs; the Dockerfile sets it for containers. The application starts without this key and shows a clear unavailable state.
 
 ## Environment variables
 
@@ -71,6 +71,9 @@ Never put the key in frontend files, browser storage, or a committed repository.
 | `UPSTREAM_TIMEOUT_SECONDS` | Upstream API timeout | `12` |
 | `WEATHER_CACHE_TTL_SECONDS` | Weather cache TTL | `900` |
 | `CORS_ORIGINS` | Allowed browser origins | local development origins |
+| `AI_RATE_LIMIT_PER_MIN` | Max AI questions per client IP per minute (`0` disables) | `10` |
+| `COMPARISON_WORKERS` | Parallel upstream requests for district comparison | `6` |
+| `LOG_LEVEL` | Backend log level | `INFO` |
 
 ## API endpoints
 
@@ -85,7 +88,7 @@ Never put the key in frontend files, browser storage, or a committed repository.
 - `POST /api/ai/ask`
 - `GET /docs` for interactive API documentation.
 
-Historical requests are limited to 10 years per query. District comparison makes one historical request per district and may take time or partially fail if the upstream provider is rate-limited.
+Historical requests are limited to 10 years per query. District comparison makes one historical request per district (with bounded parallelism) and may take time or partially fail if the upstream provider is rate-limited.
 
 ## Tests
 
@@ -95,7 +98,7 @@ python -m pip install httpx
 python -m unittest discover -s tests -v
 ```
 
-Tests cover the district directory, coordinate sanity, API validation, source transparency, and graceful AI unavailability. Real-provider integration requires network access and is intentionally not part of deterministic unit tests.
+Tests cover `.env` load order, district-ID normalization, API validation, comparison, and the AI layer (string/list answers, chat history, error mapping, malformed responses), all with mocked upstreams. Real-provider integration requires network access and is intentionally not part of deterministic unit tests.
 
 ## Architecture
 
@@ -113,7 +116,7 @@ tests/                  Automated tests
 
 - Serve over HTTPS behind a production ASGI server/reverse proxy.
 - Set `CORS_ORIGINS` to the exact production origin.
-- Add request throttling/authentication before exposing costly comparison or AI endpoints publicly.
+- The AI endpoint has a basic in-memory per-IP rate limit; behind a proxy or multiple workers, add real throttling/authentication before exposing it publicly.
 - For reliable scheduled ingestion and larger concurrent deployments, move refresh work into a background job and consider PostgreSQL.
 - Add verified district boundary GeoJSON before rendering choropleths; this version intentionally uses representative coordinate markers.
 - Check provider terms, attribution, licensing, rate limits, and model metadata before public/commercial deployment.

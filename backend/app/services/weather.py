@@ -22,7 +22,14 @@ def _get_json(url, params):
             if response.status != 200:
                 raise ProviderError(f"Weather provider returned HTTP {response.status}")
             data = json.loads(response.read().decode("utf-8"))
-    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+    except HTTPError as exc:
+        reason = ""
+        try:
+            reason = json.loads(exc.read().decode("utf-8")).get("reason", "")
+        except Exception:
+            pass
+        raise ProviderError(f"Weather provider rejected the request (HTTP {exc.code}){': ' + reason if reason else ''}") from exc
+    except (URLError, TimeoutError, json.JSONDecodeError) as exc:
         raise ProviderError(f"Weather provider unavailable: {exc.__class__.__name__}") from exc
     if not isinstance(data, dict) or data.get("error"):
         raise ProviderError("Weather provider returned an invalid response")
@@ -47,12 +54,13 @@ def _save_cache(key, payload):
     return now
 
 def district_by_id(district_id):
-    return next((d for d in DISTRICTS if d["id"] == district_id.lower()), None)
+    return next((d for d in DISTRICTS if d["id"] == str(district_id).strip().lower()), None)
 
 def get_forecast(district_id, force=False):
     district = district_by_id(district_id)
     if not district:
         raise ValueError("Unknown district")
+    district_id = district["id"]
     key = f"forecast:{district_id}"
     cached = _cached(key)
     if cached and not force and not cached["stale"]:
@@ -110,6 +118,7 @@ def get_history(district_id, start, end, force=False):
     district = district_by_id(district_id)
     if not district:
         raise ValueError("Unknown district")
+    district_id = district["id"]
     try:
         start_d, end_d = date.fromisoformat(start), date.fromisoformat(end)
     except ValueError as exc:
