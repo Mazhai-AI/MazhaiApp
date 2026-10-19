@@ -225,9 +225,9 @@ function translatePhrase(value, language) {
   match = value.match(/^(\d+(?:\.\d+)?) mm forecast total from (.+)\. This is a model forecast, not a measured district total\.$/);
   if (match) return match[1] + " மிமீ முன்னறிவிப்பு மழை மொத்தம் (" + match[2] + "). இது மாதிரி முன்னறிவிப்பு; அளவிடப்பட்ட மாவட்ட மொத்தம் அல்ல.";
   match = value.match(/^(\d+) of (\d+) forecast days have at least 1 mm indicated\. Highest daily amount: (.+) mm on (.+)\.$/);
-  if (match) return match[2] + " முன்னறிவிப்பு நாட்களில் " + match[1] + நாட்களில் குறைந்தது 1 மிமீ மழை எதிர்பார்க்கப்படுகிறது. அதிகபட்ச தினசரி அளவு " + match[3] + " மிமீ (" + match[4] + ").";
+  if (match) return match[2] + " முன்னறிவிப்பு நாட்களில் " + match[1] + " நாட்களில் குறைந்தது 1 மிமீ மழை எதிர்பார்க்கப்படுகிறது. அதிகபட்ச தினசரி அளவு " + match[3] + " மிமீ (" + match[4] + ").";
   match = value.match(/^([^·]+) · current$/);
-  if (match) return match[1] + " · தற்போதைய நிலை";
+  if (match) return translatePhrase(match[1].trim(), language) + " · தற்போதைய நிலை";
   match = value.match(/^Cannot connect to Mazhai AI API: (.+)$/);
   if (match) return "மழை AI API-ஐ இணைக்க முடியவில்லை: " + match[1];
   return value;
