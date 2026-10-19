@@ -36,7 +36,7 @@ chmod +x run.sh
 ./run.sh
 ```
 
-Open <http://127.0.0.1:8000>. The script creates `.venv`, installs backend requirements, and copies `.env.example` to `.env` if needed.
+Open <http://127.0.0.1:8001>. The script creates `.venv`, installs backend requirements, and copies `.env.example` to `.env` if needed.
 
 Manual setup:
 
@@ -45,10 +45,10 @@ python3 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\\Scripts\\activate
 python -m pip install -r backend/requirements.txt
 cp .env.example .env             # Windows: copy .env.example .env
-python -m uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000
+python -m uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8001
 ```
 
-API docs: <http://127.0.0.1:8000/docs>
+API docs: <http://127.0.0.1:8001/docs>
 
 ## Configure Mistral
 
