@@ -311,17 +311,111 @@ def _build_rainfall_alert(forecast_summary, history_summary=None):
     }
 
 
+def _parse_json_object(raw):
+    """Parse plain, fenced, double-encoded, or JSON embedded in extra prose."""
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    text = raw.strip()
+    candidates = [text]
+    unfenced = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", text, flags=re.IGNORECASE).strip()
+    if unfenced and unfenced not in candidates:
+        candidates.append(unfenced)
+    for item in list(candidates):
+        first, last = item.find("{"), item.rfind("}")
+        if first >= 0 and last > first:
+            extracted = item[first:last + 1].strip()
+            if extracted not in candidates:
+                candidates.append(extracted)
+
+    for candidate in candidates:
+        attempts = [candidate]
+        repaired = _repair_unescaped_json_quotes(candidate)
+        if repaired != candidate:
+            attempts.append(repaired)
+        for attempt in attempts:
+            try:
+                parsed = json.loads(attempt)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if isinstance(parsed, str):
+                try:
+                    parsed = json.loads(parsed.strip())
+                except (TypeError, json.JSONDecodeError):
+                    continue
+            if isinstance(parsed, dict):
+                return parsed
+    return None
+
+
+def _repair_unescaped_json_quotes(candidate):
+    """Escape embedded prose quotes while preserving actual JSON delimiters."""
+    output = []
+    in_string = False
+    escaped = False
+    index = 0
+    while index < len(candidate):
+        char = candidate[index]
+        if not in_string:
+            output.append(char)
+            if char == '"':
+                in_string = True
+            index += 1
+            continue
+        if escaped:
+            output.append(char)
+            escaped = False
+            index += 1
+            continue
+        if char == "\\":
+            output.append(char)
+            escaped = True
+            index += 1
+            continue
+        if char == '"':
+            look = index + 1
+            while look < len(candidate) and candidate[look].isspace():
+                look += 1
+            following = candidate[look] if look < len(candidate) else ""
+            closes_string = following in ("", "}", "]", ":")
+            if following == ",":
+                after_comma = look + 1
+                while after_comma < len(candidate) and candidate[after_comma].isspace():
+                    after_comma += 1
+                next_value = candidate[after_comma] if after_comma < len(candidate) else ""
+                closes_string = next_value in ('"', "{", "[", "}", "]") or not next_value
+            output.append(char if closes_string else '\\"')
+            if closes_string:
+                in_string = False
+            index += 1
+            continue
+        output.append(char)
+        index += 1
+    return "".join(output)
+
+
 def _normalize_structured_answer(raw):
-    """Validate the model's JSON response and return a predictable set of display fields."""
-    try:
-        parsed = json.loads(raw)
-    except (TypeError, json.JSONDecodeError):
-        return None
+    """Validate model JSON and prevent JSON-like output leaking into the chat UI."""
+    parsed = _parse_json_object(raw)
     if not isinstance(parsed, dict):
-        return None
+        looks_structured = isinstance(raw, str) and (
+            raw.lstrip().startswith("{")
+            or "current_conditions_and_forecast" in raw
+            or "recommended_actions" in raw
+        )
+        if not looks_structured:
+            return None
+        parsed = {
+            "current_conditions_and_forecast": "The AI response could not be formatted into the expected sections. Please retry your question.",
+            "historical_context": "This response could not be parsed, so no historical comparison is displayed.",
+            "what_to_watch_next": ["Retry the question to request a fresh structured response."],
+            "recommended_actions": ["For safety decisions, check current official IMD and local authority advisories."],
+            "confidence_and_limitations": "The generated response format was invalid. No new measurements or warnings have been inferred.",
+        }
 
     def clean_text(value, fallback):
-        return value.strip()[:1800] if isinstance(value, str) and value.strip() else fallback
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:1800]
+        return fallback
 
     def clean_list(value, fallback):
         if not isinstance(value, list):
@@ -330,28 +424,12 @@ def _normalize_structured_answer(raw):
         return items[:6] or fallback
 
     return {
-        "current_conditions_and_forecast": clean_text(
-            parsed.get("current_conditions_and_forecast"),
-            "The model did not provide a current forecast summary.",
-        ),
-        "historical_context": clean_text(
-            parsed.get("historical_context"),
-            "Historical rainfall context is unavailable or was not returned.",
-        ),
-        "what_to_watch_next": clean_list(
-            parsed.get("what_to_watch_next"),
-            ["Check updated forecast data and official weather bulletins."],
-        ),
-        "recommended_actions": clean_list(
-            parsed.get("recommended_actions"),
-            ["Use local conditions and official authority guidance when deciding what to do."],
-        ),
-        "confidence_and_limitations": clean_text(
-            parsed.get("confidence_and_limitations"),
-            "This is a preliminary model-data explanation, not an official warning.",
-        ),
+        "current_conditions_and_forecast": clean_text(parsed.get("current_conditions_and_forecast"), "The model did not provide a current forecast summary."),
+        "historical_context": clean_text(parsed.get("historical_context"), "Historical rainfall context is unavailable or was not returned."),
+        "what_to_watch_next": clean_list(parsed.get("what_to_watch_next"), ["Check updated forecast data and official weather bulletins."]),
+        "recommended_actions": clean_list(parsed.get("recommended_actions"), ["Use local conditions and official authority guidance when deciding what to do."]),
+        "confidence_and_limitations": clean_text(parsed.get("confidence_and_limitations"), "This is a preliminary model-data explanation, not an official warning."),
     }
-
 
 def _structured_answer_markdown(answer):
     """Keep a readable text transcript for chat history, APIs, and non-rich clients."""
