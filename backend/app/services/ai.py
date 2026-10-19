@@ -45,14 +45,25 @@ def _clean_history(history):
     return cleaned
 
 
-def _user_message(status):
-    return {
+def _user_message(status, language="en"):
+    english = {
         401: "Mistral rejected the API key. Check MISTRAL_API_KEY on the server.",
         403: "Mistral denied access for this key or model.",
         404: "Mistral does not recognise the configured model. Check MISTRAL_MODEL.",
         422: "Mistral rejected the request format.",
         429: "Mistral rate limit reached. Try again shortly.",
-    }.get(status, "Mistral service returned an error. Weather and history features remain available.")
+    }
+    tamil = {
+        401: "Mistral API விசை ஏற்கப்படவில்லை. சேவையகத்தில் MISTRAL_API_KEY அமைப்பைச் சரிபார்க்கவும்.",
+        403: "இந்த API விசை அல்லது மாதிரிக்கு Mistral அனுமதி வழங்கவில்லை.",
+        404: "அமைக்கப்பட்ட Mistral மாதிரி கிடைக்கவில்லை. MISTRAL_MODEL அமைப்பைச் சரிபார்க்கவும்.",
+        422: "Mistral கோரிக்கை வடிவத்தை ஏற்கவில்லை.",
+        429: "Mistral கோரிக்கை வரம்பை எட்டிவிட்டது. சிறிது நேரம் கழித்து முயற்சிக்கவும்.",
+    }
+    fallback = ("Mistral சேவையில் பிழை ஏற்பட்டது. வானிலை மற்றும் வரலாற்று அம்சங்கள் தொடர்ந்து கிடைக்கும்."
+                if language == "ta" else
+                "Mistral service returned an error. Weather and history features remain available.")
+    return (tamil if language == "ta" else english).get(status, fallback)
 
 
 def _is_number(value):
@@ -508,11 +519,17 @@ def _language_retry_instruction(language):
 def _build_system_prompt(now_ist, language="en"):
     """Construct the stable instruction set that governs English/Tamil AI analysis."""
     language_instruction = (
-        "Write every user-facing value in natural, clear everyday Tamil (தமிழ்). Avoid unnecessary English code-switching; "
-        "keep place names, dates, units, acronyms such as IMD, and numerical values accurate. "
-        "The JSON field names must remain exactly in English as specified."
+        "LANGUAGE LOCK: The selected response language is TAMIL (தமிழ்). Write EVERY user-facing JSON value only in "
+        "natural, clear Tamil. Do not answer in English just because the user's question or conversation history is English. "
+        "English may be used only for exact JSON keys, standard acronyms (such as IMD), proper product/source names, and "
+        "technical names that should not be translated. Numbers, units, dates, and place names must remain accurate. "
+        "Before responding, check that each value is Tamil prose. If your draft is in English, translate and rewrite it "
+        "in Tamil before returning it."
         if language == "ta"
-        else "Write every user-facing value in clear English. The JSON field names must remain exactly in English as specified."
+        else "LANGUAGE LOCK: The selected response language is ENGLISH. Write EVERY user-facing JSON value in English. "
+        "Do not answer in Tamil just because the user's question or conversation history is Tamil. Tamil may appear only "
+        "in proper names when necessary. Before responding, check and rewrite any Tamil prose into English. "
+        "The JSON field names must remain exactly in English."
     )
     return (
         language_instruction + " "
