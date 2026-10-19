@@ -119,7 +119,7 @@ tests/                  Automated tests
 - Set `CORS_ORIGINS` to the exact production origin.
 - The AI endpoint has a basic in-memory per-IP rate limit; behind a proxy or multiple workers, add real throttling/authentication before exposing it publicly.
 - For reliable scheduled ingestion and larger concurrent deployments, move refresh work into a background job and consider PostgreSQL.
-- Add verified district boundary GeoJSON before rendering choropleths; this version intentionally uses representative coordinate markers.
+- Chennai's city explorer includes 200 numbered ward polygons from the DataMeet Municipal Spatial Data project, attributed to Transparent Chennai and licensed under CC BY-SA 2.5 India. See [`frontend/data/geo/README.md`](frontend/data/geo/README.md) for provenance and limitations. The dataset is community-curated and should be checked against current Greater Chennai Corporation/Government Gazette ward maps before authoritative use.
 - Check provider terms, attribution, licensing, rate limits, and model metadata before public/commercial deployment.
 
 ## Site

@@ -456,20 +456,30 @@ function openChennaiView(district) {
 async function loadChennaiBoundaries() {
   const status = byId("wx-boundary-status");
   if (explorerState.selectedDistrict?.id !== "chennai") return;
-  // No boundary is fabricated. Add an authoritative GeoJSON asset at this path
-  // when one has been sourced and licensed for the project.
   const url = "/data/geo/chennai-wards.geojson";
+  const sourceUrl = "https://github.com/datameet/Municipal_Spatial_Data/blob/master/Chennai/Wards.geojson";
+  const licenseUrl = "https://creativecommons.org/licenses/by-sa/2.5/in/";
   try {
     const geojson = await getJSON(url);
     if (!geojson || geojson.type !== "FeatureCollection" || !Array.isArray(geojson.features)) {
       throw new Error("GeoJSON must be a FeatureCollection");
+    }
+    const wardNumbers = geojson.features.map(feature => Number(feature?.properties?.Ward_No));
+    const uniqueWards = new Set(wardNumbers);
+    if (geojson.features.length !== 200 || uniqueWards.size !== 200 ||
+        Array.from({length: 200}, (_, i) => i + 1).some(number => !uniqueWards.has(number))) {
+      throw new Error("Expected one polygon for each Chennai ward numbered 1–200");
     }
     if (explorerState.localLayer) explorerState.map.removeLayer(explorerState.localLayer);
     explorerState.localLayer = L.geoJSON(geojson, {
       style: () => ({ color: "#4bd5e8", weight: 1.5, fillColor: "#1c7184", fillOpacity: 0.18 }),
       onEachFeature: (feature, layer) => {
         const p = feature.properties || {};
-        const name = p.name || p.NAME || p.ward_name || p.WARD_NAME || p.zone_name || p.ZONE_NAME || p.id || "Mapped area";
+        const ward = p.ward_no ?? p.Ward_No ?? p.WARD_NO ?? p.ward ?? p.Ward;
+        const zone = p.zone_name ?? p.Zone_Name ?? p.ZONE_NAME ?? p.zone ?? p.Zone;
+        const name = p.name || p.NAME || p.ward_name || p.WARD_NAME ||
+          (ward != null ? `Ward ${ward}${zone ? ` · ${zone}` : ""}` : null) ||
+          p.zone_name || p.ZONE_NAME || p.id || "Mapped area";
         layer.bindTooltip(safe(name), { sticky: true });
         layer.on("mouseover", () => layer.setStyle({ fillOpacity: 0.42, weight: 2.5 }));
         layer.on("mouseout", () => explorerState.localLayer?.resetStyle(layer));
@@ -479,9 +489,11 @@ async function loadChennaiBoundaries() {
     if (explorerState.localLayer.getBounds().isValid()) {
       explorerState.map.fitBounds(explorerState.localLayer.getBounds(), { padding: [16, 16] });
     }
-    if (status) status.textContent = `${geojson.features.length} mapped areas loaded from the configured GeoJSON. Check the dataset metadata to confirm whether these are wards or zones.`;
-  } catch {
-    if (status) status.innerHTML = `Chennai ward boundaries are not installed yet. No artificial boundaries are drawn. Add a verified, licensed GeoJSON file at <code>frontend/data/geo/chennai-wards.geojson</code> to enable selectable wards.`;
+    if (status) {
+      status.innerHTML = `<strong>200 Chennai ward boundaries loaded.</strong> Hover over a polygon to see its ward number and zone, or select it for details. Historical community-curated boundary data; verify against the latest GCC Gazette for authoritative use. <a href="${sourceUrl}" target="_blank" rel="noreferrer">Source: DataMeet / Transparent Chennai</a> · <a href="${licenseUrl}" target="_blank" rel="noreferrer">CC BY-SA 2.5 India</a>.`;
+    }
+  } catch (error) {
+    if (status) status.textContent = `Chennai ward boundaries could not be loaded: ${error.message}. Check the deployed GeoJSON asset and its 200 ward features.`;
   }
 }
 
