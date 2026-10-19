@@ -363,7 +363,10 @@ def _parse_json_object(raw):
 
     # A response can be truncated at the token limit or contain malformed quoting.
     # Recover any complete schema fields rather than discarding an otherwise useful answer.
-    return _salvage_structured_json(text)
+    salvaged = _salvage_structured_json(text)
+    if salvaged:
+        salvaged["_parse_error"] = True
+    return salvaged
 
 
 def _repair_unescaped_json_quotes(candidate):
@@ -534,9 +537,12 @@ def _salvage_structured_json(raw):
 
 
 def _normalize_structured_answer(raw):
-    """Validate model JSON and prevent JSON-like output leaking into the chat UI."""
+    """Validate model JSON, recover fields, and flag output that needs a format retry."""
     parsed = _parse_json_object(raw)
-    if not isinstance(parsed, dict):
+    parse_error = False
+    if isinstance(parsed, dict):
+        parse_error = bool(parsed.pop("_parse_error", False))
+    else:
         looks_structured = isinstance(raw, str) and (
             raw.lstrip().startswith("{")
             or "current_conditions_and_forecast" in raw
@@ -544,6 +550,7 @@ def _normalize_structured_answer(raw):
         )
         if not looks_structured:
             return None
+        parse_error = True
         parsed = {
             "current_conditions_and_forecast": "The AI response could not be formatted into the expected sections. Please retry your question.",
             "historical_context": "This response could not be parsed, so no historical comparison is displayed.",
@@ -564,12 +571,14 @@ def _normalize_structured_answer(raw):
         return items[:6] or fallback
 
     return {
+        "_parse_error": parse_error,
         "current_conditions_and_forecast": clean_text(parsed.get("current_conditions_and_forecast"), "The model did not provide a current forecast summary."),
         "historical_context": clean_text(parsed.get("historical_context"), "Historical rainfall context is unavailable or was not returned."),
         "what_to_watch_next": clean_list(parsed.get("what_to_watch_next"), ["Check updated forecast data and official weather bulletins."]),
         "recommended_actions": clean_list(parsed.get("recommended_actions"), ["Use local conditions and official authority guidance when deciding what to do."]),
         "confidence_and_limitations": clean_text(parsed.get("confidence_and_limitations"), "This is a preliminary model-data explanation, not an official warning."),
     }
+
 
 def _structured_answer_markdown(answer):
     """Keep a readable text transcript for chat history, APIs, and non-rich clients."""
@@ -641,6 +650,24 @@ def _language_fallback(language):
         "recommended_actions": ["Follow official IMD and local-authority guidance for safety decisions."],
         "confidence_and_limitations": "The response did not pass the language check; no new weather measurements or warnings have been inferred.",
     }
+
+
+def _format_retry_instruction(language):
+    """Ask Mistral to repair JSON structure without changing evidence or the selected language."""
+    language_rule = (
+        "Write all user-facing values in natural Tamil; keep JSON keys in English."
+        if language == "ta" else
+        "Write all user-facing values in clear English; keep JSON keys in English."
+    )
+    return (
+        "FORMAT CHECK FAILED: Your previous response was invalid, truncated, or could not be parsed as the required JSON. "
+        "Rewrite it as one complete, valid JSON object with exactly the five required fields: "
+        "current_conditions_and_forecast (string), historical_context (string), what_to_watch_next (array of strings), "
+        "recommended_actions (array of strings), confidence_and_limitations (string). "
+        "Use only facts from the evidence. Do not include Markdown fences, preamble, trailing commentary, raw newlines "
+        "inside JSON strings, or unescaped quotation marks. Keep all text concise so the object is complete. "
+        + language_rule
+    )
 
 
 def _language_retry_instruction(language):
