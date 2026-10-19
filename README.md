@@ -12,6 +12,7 @@ Mazhai AI is a full-stack web application with an HTML/CSS/vanilla JavaScript fr
 - Leaflet district-reference map and district explorer.
 - Source registry, data freshness, cached-data fallback, and transparent provider limitations.
 - Optional Mistral assistant that receives retrieved weather/history evidence and returns validated structured sections (current forecast, historical context, what to watch, actions, and limitations).
+- English/Tamil interface language selector in Settings, saved in the browser; the AI assistant follows the selected language for response content.
 - An explicitly labelled app-generated rainfall-attention indicator that combines upcoming forecast rainfall with recent historical rainfall; it never claims to be an official warning.
 - API validation, bounded upstream timeouts, SQLite cache, and tests.
 
@@ -27,6 +28,7 @@ Mazhai AI is a full-stack web application with an HTML/CSS/vanilla JavaScript fr
 ## Requirements
 
 - Python 3.10 or newer.
+- A modern browser with JavaScript enabled; the Tamil interface uses the Noto Sans Tamil web font when available.
 - Internet connectivity for Open-Meteo and CDN assets.
 - Optional Mistral API key for the AI assistant.
 
@@ -99,7 +101,7 @@ python -m pip install httpx
 python -m unittest discover -s tests -v
 ```
 
-Tests cover `.env` load order, district-ID normalization, API validation, comparison, and the AI layer (string/list answers, chat history, error mapping, malformed responses), all with mocked upstreams. Real-provider integration requires network access and is intentionally not part of deterministic unit tests.
+Tests cover `.env` load order, district-ID normalization, API validation, language selection/AI language instructions, comparison, and the AI layer (string/list answers, chat history, error mapping, malformed responses), all with mocked upstreams. Real-provider integration requires network access and is intentionally not part of deterministic unit tests.
 
 ## Architecture
 
