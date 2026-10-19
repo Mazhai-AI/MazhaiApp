@@ -13,6 +13,7 @@ Mazhai AI is a full-stack web application with an HTML/CSS/vanilla JavaScript fr
 - Source registry, data freshness, cached-data fallback, and transparent provider limitations.
 - Optional Mistral assistant that receives retrieved weather/history evidence and returns validated structured sections (current forecast, historical context, what to watch, actions, and limitations).
 - English/Tamil interface language selector in Settings, saved in the browser; the AI assistant follows the selected language for response content.
+- AI response-language enforcement: the backend checks every generated answer section against the selected English/Tamil language, retries once on a mismatch, and uses a localized fallback if the provider still returns the wrong language.
 - The AI system prompt emphasizes evidence-grounded answers, conversational follow-up continuity, concise recommendations, valid structured output, and clear handling of missing or stale data.
 - An explicitly labelled app-generated rainfall-attention indicator that combines upcoming forecast rainfall with recent historical rainfall; it never claims to be an official warning.
 - API validation, bounded upstream timeouts, SQLite cache, and tests.
