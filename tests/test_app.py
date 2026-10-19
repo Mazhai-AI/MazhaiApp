@@ -331,10 +331,124 @@ class AiTests(unittest.TestCase):
 
         prompt_ta = ai._build_system_prompt(datetime(2026, 10, 20, 0, 0), "ta")
         prompt_en = ai._build_system_prompt(datetime(2026, 10, 20, 0, 0), "en")
-        self.assertIn("natural, clear everyday Tamil (தமிழ்)", prompt_ta)
+        self.assertIn("LANGUAGE LOCK: The selected response language is TAMIL (தமிழ்)", prompt_ta)
         self.assertIn("Keep field names in English", prompt_ta)
-        self.assertIn("clear English", prompt_en)
+        self.assertIn("LANGUAGE LOCK: The selected response language is ENGLISH", prompt_en)
         self.assertIn('"what_to_watch_next": array of 2-4 strings', prompt_en)
+
+    def test_language_guard_checks_every_section_not_only_combined_ratio(self):
+        tamil = {
+            "current_conditions_and_forecast": "நாளை மழை பெய்ய வாய்ப்புள்ளது.",
+            "historical_context": "சமீபத்திய மழைப்பொழிவு சராசரியை விட அதிகமாக இருந்தது.",
+            "what_to_watch_next": ["நாளைய முன்னறிவிப்பைச் சரிபார்க்கவும்."],
+            "recommended_actions": ["அதிகாரப்பூர்வ வானிலை அறிவிப்புகளைப் பார்க்கவும்."],
+            "confidence_and_limitations": "இவை மாதிரி மதிப்பீடுகள்.",
+        }
+        self.assertFalse(ai._answer_language_mismatch(tamil, "ta"))
+        mixed = dict(tamil)
+        mixed["historical_context"] = "Recent rainfall was above average and may continue."
+        self.assertTrue(ai._answer_language_mismatch(mixed, "ta"))
+        self.assertTrue(ai._answer_language_mismatch(tamil, "en"))
+        english = {
+            "current_conditions_and_forecast": "Rain is possible tomorrow in Chennai.",
+            "historical_context": "Recent rainfall was above average.",
+            "what_to_watch_next": ["Check the updated forecast tomorrow."],
+            "recommended_actions": ["Follow official weather bulletins."],
+            "confidence_and_limitations": "These are model estimates.",
+        }
+        self.assertFalse(ai._answer_language_mismatch(english, "en"))
+
+    def test_tamil_selection_retries_an_english_answer_and_returns_tamil(self):
+        english = {
+            "current_conditions_and_forecast": "Chennai has a chance of rain tomorrow.",
+            "historical_context": "Recent rainfall was above average.",
+            "what_to_watch_next": ["Check the forecast tomorrow."],
+            "recommended_actions": ["Check official weather bulletins."],
+            "confidence_and_limitations": "These are model estimates.",
+        }
+        tamil = {
+            "current_conditions_and_forecast": "நாளை சென்னையில் மழை பெய்ய வாய்ப்புள்ளது.",
+            "historical_context": "சமீபத்திய மழைப்பொழிவு சராசரியை விட அதிகமாக இருந்தது.",
+            "what_to_watch_next": ["நாளைய முன்னறிவிப்பைச் சரிபார்க்கவும்."],
+            "recommended_actions": ["அதிகாரப்பூர்வ வானிலை அறிவிப்புகளைப் பார்க்கவும்."],
+            "confidence_and_limitations": "இவை வானிலை மாதிரி மதிப்பீடுகள்.",
+        }
+        queued = [json.dumps(english), json.dumps(tamil, ensure_ascii=False)]
+        sent_requests = []
+
+        def sequenced(req, timeout=None):
+            sent_requests.append(json.loads(req.data.decode()))
+            return FakeResp({"choices": [{"message": {"content": queued.pop(0)}}]})
+
+        ai.urlopen = sequenced
+        result = ai.ask_mistral("What about tomorrow?", language="ta")
+        self.assertTrue(result["available"])
+        self.assertEqual(result["language"], "ta")
+        self.assertTrue(result["language_retry_used"])
+        self.assertEqual(len(sent_requests), 2)
+        self.assertIn("LANGUAGE CHECK FAILED", sent_requests[1]["messages"][-1]["content"])
+        self.assertIn("சென்னையில் மழை", result["structured_answer"]["current_conditions_and_forecast"])
+        self.assertFalse(ai._answer_language_mismatch(result["structured_answer"], "ta"))
+
+    def test_english_selection_retries_a_tamil_answer_and_returns_english(self):
+        tamil = {
+            "current_conditions_and_forecast": "நாளை சென்னையில் மழை பெய்ய வாய்ப்புள்ளது.",
+            "historical_context": "சமீபத்திய மழைப்பொழிவு அதிகமாக இருந்தது.",
+            "what_to_watch_next": ["முன்னறிவிப்பைச் சரிபார்க்கவும்."],
+            "recommended_actions": ["அதிகாரப்பூர்வ அறிவிப்புகளைப் பார்க்கவும்."],
+            "confidence_and_limitations": "இவை மாதிரி மதிப்பீடுகள்.",
+        }
+        english = {
+            "current_conditions_and_forecast": "Rain is possible in Chennai tomorrow.",
+            "historical_context": "Recent rainfall was higher than average.",
+            "what_to_watch_next": ["Check the updated forecast."],
+            "recommended_actions": ["Follow official weather bulletins."],
+            "confidence_and_limitations": "These are model estimates, not station observations.",
+        }
+        queued = [json.dumps(tamil, ensure_ascii=False), json.dumps(english)]
+        requests = []
+
+        def sequenced(req, timeout=None):
+            requests.append(json.loads(req.data.decode()))
+            return FakeResp({"choices": [{"message": {"content": queued.pop(0)}}]})
+
+        ai.urlopen = sequenced
+        result = ai.ask_mistral("மழை பெய்யுமா?", language="en")
+        self.assertTrue(result["available"])
+        self.assertEqual(result["language"], "en")
+        self.assertTrue(result["language_retry_used"])
+        self.assertEqual(len(requests), 2)
+        self.assertIn("Rain is possible", result["structured_answer"]["current_conditions_and_forecast"])
+        self.assertFalse(ai._answer_language_mismatch(result["structured_answer"], "en"))
+
+    def test_persistent_language_mismatch_uses_selected_language_fallback(self):
+        english = {
+            "current_conditions_and_forecast": "Rain is possible tomorrow in Chennai.",
+            "historical_context": "Recent rain was above average.",
+            "what_to_watch_next": ["Monitor the forecast."],
+            "recommended_actions": ["Check official bulletins."],
+            "confidence_and_limitations": "These are model estimates.",
+        }
+        queue = [json.dumps(english), json.dumps(english)]
+
+        def sequenced(req, timeout=None):
+            return FakeResp({"choices": [{"message": {"content": queue.pop(0)}}]})
+
+        ai.urlopen = sequenced
+        result = ai.ask_mistral("Tell me the outlook.", language="ta")
+        self.assertTrue(result["available"])
+        self.assertEqual(result["language"], "ta")
+        self.assertTrue(result["language_retry_used"])
+        self.assertIn("மன்னிக்கவும்", result["structured_answer"]["current_conditions_and_forecast"])
+        self.assertFalse(ai._answer_language_mismatch(result["structured_answer"], "ta"))
+        self.assertFalse(result["answer"].lstrip().startswith("{"))
+
+    def test_unconfigured_ai_message_uses_selected_tamil(self):
+        os.environ.pop("MISTRAL_API_KEY", None)
+        result = ai.ask_mistral("மழை நிலை என்ன?", language="ta")
+        self.assertFalse(result["available"])
+        self.assertEqual(result["language"], "ta")
+        self.assertIn("அமைக்கப்படவில்லை", result["message"])
 
     def test_tamil_language_instruction_is_sent_to_mistral(self):
         payload = {
@@ -347,7 +461,7 @@ class AiTests(unittest.TestCase):
         ai.urlopen = self._fake(json.dumps(payload, ensure_ascii=False))
         result = ai.ask_mistral("மழை நிலை என்ன?", district_id=None, language="ta")
         self.assertTrue(result["available"])
-        self.assertIn("Write every user-facing value in natural, clear everyday Tamil (தமிழ்)", self.sent["messages"][0]["content"])
+        self.assertIn("LANGUAGE LOCK: The selected response language is TAMIL (தமிழ்)", self.sent["messages"][0]["content"])
         self.assertEqual(result["structured_answer"]["historical_context"], payload["historical_context"])
 
     def test_tamil_district_names_resolve_for_ai_questions(self):

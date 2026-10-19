@@ -45,14 +45,25 @@ def _clean_history(history):
     return cleaned
 
 
-def _user_message(status):
-    return {
+def _user_message(status, language="en"):
+    english = {
         401: "Mistral rejected the API key. Check MISTRAL_API_KEY on the server.",
         403: "Mistral denied access for this key or model.",
         404: "Mistral does not recognise the configured model. Check MISTRAL_MODEL.",
         422: "Mistral rejected the request format.",
         429: "Mistral rate limit reached. Try again shortly.",
-    }.get(status, "Mistral service returned an error. Weather and history features remain available.")
+    }
+    tamil = {
+        401: "Mistral API விசை ஏற்கப்படவில்லை. சேவையகத்தில் MISTRAL_API_KEY அமைப்பைச் சரிபார்க்கவும்.",
+        403: "இந்த API விசை அல்லது மாதிரிக்கு Mistral அனுமதி வழங்கவில்லை.",
+        404: "அமைக்கப்பட்ட Mistral மாதிரி கிடைக்கவில்லை. MISTRAL_MODEL அமைப்பைச் சரிபார்க்கவும்.",
+        422: "Mistral கோரிக்கை வடிவத்தை ஏற்கவில்லை.",
+        429: "Mistral கோரிக்கை வரம்பை எட்டிவிட்டது. சிறிது நேரம் கழித்து முயற்சிக்கவும்.",
+    }
+    fallback = ("Mistral சேவையில் பிழை ஏற்பட்டது. வானிலை மற்றும் வரலாற்று அம்சங்கள் தொடர்ந்து கிடைக்கும்."
+                if language == "ta" else
+                "Mistral service returned an error. Weather and history features remain available.")
+    return (tamil if language == "ta" else english).get(status, fallback)
 
 
 def _is_number(value):
@@ -443,14 +454,96 @@ def _structured_answer_markdown(answer):
     return "\n\n".join(f"{heading}\n{body}" for heading, body in sections)
 
 
+
+def _answer_language_mismatch(answer, language):
+    """Check each user-facing value, allowing numbers, acronyms, and proper names."""
+    if isinstance(answer, dict):
+        values = []
+        for value in answer.values():
+            if isinstance(value, str):
+                values.append(value)
+            elif isinstance(value, list):
+                values.extend(item for item in value if isinstance(item, str))
+    elif isinstance(answer, str):
+        values = [answer]
+    else:
+        return True
+
+    checked = 0
+    all_letters = []
+    for value in values:
+        letters = [char for char in value if char.isalpha()]
+        all_letters.extend(letters)
+        if len(letters) < 5:
+            # Very short labels/acronyms are not meaningful language samples.
+            continue
+        checked += 1
+        tamil = sum(0x0B80 <= ord(char) <= 0x0BFF for char in letters)
+        ratio = tamil / len(letters)
+        if language == "ta":
+            # Each prose field/list item should be Tamil, not merely one Tamil sentence in an English answer.
+            if tamil < 5 or ratio < 0.15:
+                return True
+        elif tamil >= 5 and ratio >= 0.20:
+            return True
+    if checked == 0:
+        tamil_all = sum(0x0B80 <= ord(char) <= 0x0BFF for char in all_letters)
+        # Tiny but clearly wrong-language text such as "ok" should still trigger a Tamil retry.
+        return tamil_all < len(all_letters) if language == "ta" else tamil_all > 0
+    return False
+
+
+
+
+def _language_fallback(language):
+    """Localized, safe response when the model cannot obey the selected language."""
+    if language == "ta":
+        return {
+            "current_conditions_and_forecast": "மன்னிக்கவும், தேர்ந்தெடுத்த மொழியில் நம்பகமான பதிலை உருவாக்க முடியவில்லை. தயவுசெய்து மீண்டும் முயற்சிக்கவும்.",
+            "historical_context": "இந்த முயற்சியில் வரலாற்று மழைப்பொழிவுடன் ஒப்பீடு வழங்கப்படவில்லை.",
+            "what_to_watch_next": ["கேள்வியை மீண்டும் அனுப்பி முயற்சிக்கவும்.", "அதிகாரப்பூர்வ வானிலை எச்சரிக்கைகளைச் சரிபார்க்கவும்."],
+            "recommended_actions": ["பாதுகாப்பு முடிவுகளுக்கு அதிகாரப்பூர்வ IMD மற்றும் உள்ளூர் நிர்வாக அறிவுறுத்தல்களைப் பின்பற்றவும்."],
+            "confidence_and_limitations": "இந்த பதில் மொழிச் சரிபார்ப்பைத் தாண்டவில்லை; புதிய வானிலை அளவீடோ எச்சரிக்கையோ ஊகிக்கப்படவில்லை.",
+        }
+    return {
+        "current_conditions_and_forecast": "Sorry, I could not produce a reliable answer in the selected language. Please try again.",
+        "historical_context": "A historical rainfall comparison was not produced for this attempt.",
+        "what_to_watch_next": ["Ask the question again to request a fresh response.", "Check official weather bulletins."],
+        "recommended_actions": ["Follow official IMD and local-authority guidance for safety decisions."],
+        "confidence_and_limitations": "The response did not pass the language check; no new weather measurements or warnings have been inferred.",
+    }
+
+
+def _language_retry_instruction(language):
+    if language == "ta":
+        return (
+            "LANGUAGE CHECK FAILED: Your previous answer was not written in the user's selected language. "
+            "Rewrite the complete answer in natural, clear Tamil (தமிழ்). Every user-facing JSON value must be Tamil. "
+            "The question and prior turns may be English; that must not change the selected Tamil response language. "
+            "Keep only the required JSON key names in English. Preserve the supplied numeric evidence exactly; "
+            "do not add facts. Return only the required valid JSON object."
+        )
+    return (
+        "LANGUAGE CHECK FAILED: Your previous answer was not written in the user's selected language. "
+        "Rewrite the complete answer in clear English. Every user-facing JSON value must be English. "
+        "Keep the required JSON key names in English. Preserve supplied numeric evidence exactly; "
+        "do not add facts. Return only the required valid JSON object."
+    )
+
 def _build_system_prompt(now_ist, language="en"):
     """Construct the stable instruction set that governs English/Tamil AI analysis."""
     language_instruction = (
-        "Write every user-facing value in natural, clear everyday Tamil (தமிழ்). Avoid unnecessary English code-switching; "
-        "keep place names, dates, units, acronyms such as IMD, and numerical values accurate. "
-        "The JSON field names must remain exactly in English as specified."
+        "LANGUAGE LOCK: The selected response language is TAMIL (தமிழ்). Write EVERY user-facing JSON value only in "
+        "natural, clear Tamil. Do not answer in English just because the user's question or conversation history is English. "
+        "English may be used only for exact JSON keys, standard acronyms (such as IMD), proper product/source names, and "
+        "technical names that should not be translated. Numbers, units, dates, and place names must remain accurate. "
+        "Before responding, check that each value is Tamil prose. If your draft is in English, translate and rewrite it "
+        "in Tamil before returning it."
         if language == "ta"
-        else "Write every user-facing value in clear English. The JSON field names must remain exactly in English as specified."
+        else "LANGUAGE LOCK: The selected response language is ENGLISH. Write EVERY user-facing JSON value in English. "
+        "Do not answer in Tamil just because the user's question or conversation history is Tamil. Tamil may appear only "
+        "in proper names when necessary. Before responding, check and rewrite any Tamil prose into English. "
+        "The JSON field names must remain exactly in English."
     )
     return (
         language_instruction + " "
@@ -510,9 +603,13 @@ def _build_system_prompt(now_ist, language="en"):
 
 
 def ask_mistral(question, district_id=None, start=None, end=None, history=None, language="en"):
+    language = "ta" if language == "ta" else "en"
     api_key = os.getenv("MISTRAL_API_KEY", "").strip()
     if not api_key:
-        return {"available": False, "message": "Mistral AI is not configured. Set MISTRAL_API_KEY in the backend environment to enable evidence-grounded analysis."}
+        message = ("Mistral AI அமைக்கப்படவில்லை. ஆதார அடிப்படையிலான பகுப்பாய்வை இயக்க backend சூழலில் MISTRAL_API_KEY அமைக்கவும்."
+                   if language == "ta" else
+                   "Mistral AI is not configured. Set MISTRAL_API_KEY in the backend environment to enable evidence-grounded analysis.")
+        return {"available": False, "language": language, "message": message}
 
     now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
     chosen_district = _resolve_district(question, district_id)
@@ -584,26 +681,66 @@ def ask_mistral(question, district_id=None, start=None, end=None, history=None, 
     }, ensure_ascii=False)})
 
     body = {"model": model, "temperature": 0.2, "max_tokens": 1200, "response_format": {"type": "json_object"}, "messages": messages}
-    req = Request(MISTRAL_URL, data=json.dumps(body).encode(), headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"})
     try:
-        with urlopen(req, timeout=20) as response:
-            result = json.loads(response.read().decode())
-        raw_answer = _extract_text(result["choices"][0]["message"]["content"])
+        def call_model(messages_to_send):
+            request_body = {**body, "messages": messages_to_send}
+            request = Request(
+                MISTRAL_URL,
+                data=json.dumps(request_body, ensure_ascii=False).encode(),
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            )
+            with urlopen(request, timeout=20) as response:
+                payload = json.loads(response.read().decode())
+            return _extract_text(payload["choices"][0]["message"]["content"])
+
+        raw_answer = call_model(messages)
         if not raw_answer:
             log.warning("Mistral returned an empty answer (model=%s)", model)
-            return {"available": False, "message": "Mistral returned an empty answer. Please try rephrasing your question."}
+            message = ("Mistral பதில் வழங்கவில்லை. உங்கள் கேள்வியை வேறு விதமாகக் கேட்டு மீண்டும் முயற்சிக்கவும்."
+                       if language == "ta" else
+                       "Mistral returned an empty answer. Please try rephrasing your question.")
+            return {"available": False, "language": language, "message": message}
+
         structured_answer = _normalize_structured_answer(raw_answer)
-        answer = _structured_answer_markdown(structured_answer) if structured_answer else raw_answer
+        answer_candidate = structured_answer if structured_answer is not None else raw_answer
+        language_retry_used = False
+        if _answer_language_mismatch(answer_candidate, language):
+            language_retry_used = True
+            retry_messages = messages + [
+                {"role": "assistant", "content": raw_answer[:5000]},
+                {"role": "user", "content": _language_retry_instruction(language)},
+            ]
+            try:
+                retry_answer = call_model(retry_messages)
+                retry_structured = _normalize_structured_answer(retry_answer) if retry_answer else None
+            except (KeyError, IndexError, TypeError, ValueError) as retry_exc:
+                log.warning("Mistral selected-language retry failed: %r", retry_exc)
+                retry_answer, retry_structured = "", None
+
+            retry_candidate = retry_structured if retry_structured is not None else retry_answer
+            if retry_answer and retry_structured is not None and not _answer_language_mismatch(retry_candidate, language):
+                raw_answer = retry_answer
+                structured_answer = retry_structured
+            else:
+                # Enforce the user's selected language even if the provider ignores the retry instruction.
+                structured_answer = _language_fallback(language)
+
+        if structured_answer is not None:
+            answer = _structured_answer_markdown(structured_answer)
+        else:
+            answer = raw_answer
         response = {
             "available": True,
+            "language": language,
             "model": model,
             "answer": answer,
             "location": location_name,
             "alert": alert,
             "historical_context_available": any(summary is not None and summary.get("valid_daily_values", 0) > 0 for summary in (history_summary, alert_history_summary)),
             "evidence_types": [item["type"] for item in evidence],
+            "language_retry_used": language_retry_used,
         }
-        if structured_answer:
+        if structured_answer is not None:
             response["structured_answer"] = structured_answer
         return response
     except HTTPError as exc:
@@ -613,10 +750,16 @@ def ask_mistral(question, district_id=None, start=None, end=None, history=None, 
         except Exception:
             pass
         log.error("Mistral HTTP %s (model=%s): %s", exc.code, model, detail)
-        return {"available": False, "message": _user_message(exc.code)}
+        return {"available": False, "language": language, "message": _user_message(exc.code, language)}
     except (URLError, TimeoutError) as exc:
         log.error("Mistral network error: %s", exc)
-        return {"available": False, "message": "Could not reach Mistral (network or timeout). Weather and history features remain available."}
+        message = ("Mistral சேவையை அணுக முடியவில்லை. வானிலை மற்றும் வரலாற்று அம்சங்கள் தொடர்ந்து கிடைக்கும்."
+                   if language == "ta" else
+                   "Could not reach Mistral (network or timeout). Weather and history features remain available.")
+        return {"available": False, "language": language, "message": message}
     except (KeyError, IndexError, TypeError, ValueError) as exc:
         log.error("Unexpected Mistral response: %r", exc)
-        return {"available": False, "message": "Mistral returned an unexpected response. Weather and history features remain available."}
+        message = ("Mistral எதிர்பாராத பதிலை வழங்கியது. வானிலை மற்றும் வரலாற்று அம்சங்கள் தொடர்ந்து கிடைக்கும்."
+                   if language == "ta" else
+                   "Mistral returned an unexpected response. Weather and history features remain available.")
+        return {"available": False, "language": language, "message": message}
