@@ -506,6 +506,7 @@ def _language_retry_instruction(language):
         return (
             "LANGUAGE CHECK FAILED: Your previous answer was not written in the user's selected language. "
             "Rewrite the complete answer in natural, clear Tamil (தமிழ்). Every user-facing JSON value must be Tamil. "
+            "The question and prior turns may be English; that must not change the selected Tamil response language. "
             "Keep only the required JSON key names in English. Preserve the supplied numeric evidence exactly; "
             "do not add facts. Return only the required valid JSON object."
         )
@@ -667,7 +668,6 @@ def ask_mistral(question, district_id=None, start=None, end=None, history=None, 
     }, ensure_ascii=False)})
 
     body = {"model": model, "temperature": 0.2, "max_tokens": 1200, "response_format": {"type": "json_object"}, "messages": messages}
-    req = Request(MISTRAL_URL, data=json.dumps(body).encode(), headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"})
     try:
         def call_model(messages_to_send):
             request_body = {**body, "messages": messages_to_send}
