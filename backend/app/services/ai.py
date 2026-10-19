@@ -443,6 +443,68 @@ def _structured_answer_markdown(answer):
     return "\n\n".join(f"{heading}\n{body}" for heading, body in sections)
 
 
+
+def _answer_language_mismatch(answer, language):
+    """Detect a clearly wrong script in user-facing response values, allowing names/numbers/acronyms."""
+    if isinstance(answer, dict):
+        values = []
+        for value in answer.values():
+            if isinstance(value, str):
+                values.append(value)
+            elif isinstance(value, list):
+                values.extend(item for item in value if isinstance(item, str))
+        text = " ".join(values)
+    elif isinstance(answer, str):
+        text = answer
+    else:
+        return True
+
+    letters = [char for char in text if char.isalpha()]
+    if not letters:
+        return True
+    tamil = sum("\u0B80" <= char <= "\u0BFF" for char in letters)
+    ratio = tamil / len(letters)
+    if language == "ta":
+        # Tamil prose must contain substantial Tamil script; technical names and acronyms may remain Latin.
+        return len(letters) >= 5 and (tamil < 5 or ratio < 0.15)
+    # English answers may contain Tamil place names, but should not be predominantly Tamil prose.
+    return tamil >= 5 and ratio >= 0.20
+
+
+def _language_fallback(language):
+    """Localized, safe response when the model cannot obey the selected language."""
+    if language == "ta":
+        return {
+            "current_conditions_and_forecast": "மன்னிக்கவும், தேர்ந்தெடுத்த மொழியில் நம்பகமான பதிலை உருவாக்க முடியவில்லை. தயவுசெய்து மீண்டும் முயற்சிக்கவும்.",
+            "historical_context": "இந்த முயற்சியில் வரலாற்று மழைப்பொழிவுடன் ஒப்பீடு வழங்கப்படவில்லை.",
+            "what_to_watch_next": ["கேள்வியை மீண்டும் அனுப்பி முயற்சிக்கவும்.", "அதிகாரப்பூர்வ வானிலை எச்சரிக்கைகளைச் சரிபார்க்கவும்."],
+            "recommended_actions": ["பாதுகாப்பு முடிவுகளுக்கு அதிகாரப்பூர்வ IMD மற்றும் உள்ளூர் நிர்வாக அறிவுறுத்தல்களைப் பின்பற்றவும்."],
+            "confidence_and_limitations": "இந்த பதில் மொழிச் சரிபார்ப்பைத் தாண்டவில்லை; புதிய வானிலை அளவீடோ எச்சரிக்கையோ ஊகிக்கப்படவில்லை.",
+        }
+    return {
+        "current_conditions_and_forecast": "Sorry, I could not produce a reliable answer in the selected language. Please try again.",
+        "historical_context": "A historical rainfall comparison was not produced for this attempt.",
+        "what_to_watch_next": ["Ask the question again to request a fresh response.", "Check official weather bulletins."],
+        "recommended_actions": ["Follow official IMD and local-authority guidance for safety decisions."],
+        "confidence_and_limitations": "The response did not pass the language check; no new weather measurements or warnings have been inferred.",
+    }
+
+
+def _language_retry_instruction(language):
+    if language == "ta":
+        return (
+            "LANGUAGE CHECK FAILED: Your previous answer was not written in the user's selected language. "
+            "Rewrite the complete answer in natural, clear Tamil (தமிழ்). Every user-facing JSON value must be Tamil. "
+            "Keep only the required JSON key names in English. Preserve the supplied numeric evidence exactly; "
+            "do not add facts. Return only the required valid JSON object."
+        )
+    return (
+        "LANGUAGE CHECK FAILED: Your previous answer was not written in the user's selected language. "
+        "Rewrite the complete answer in clear English. Every user-facing JSON value must be English. "
+        "Keep the required JSON key names in English. Preserve supplied numeric evidence exactly; "
+        "do not add facts. Return only the required valid JSON object."
+    )
+
 def _build_system_prompt(now_ist, language="en"):
     """Construct the stable instruction set that governs English/Tamil AI analysis."""
     language_instruction = (
