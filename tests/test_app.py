@@ -286,7 +286,7 @@ class AiTests(unittest.TestCase):
             "confidence_and_limitations": "இது மாதிரித் தரவு; அதிகாரப்பூர்வ எச்சரிக்கை அல்ல.",
         }
         ai.urlopen = self._fake(json.dumps(payload, ensure_ascii=False))
-        result = ai.ask_mistral("சென்னையில் மழை நிலை என்ன?", district_id=None, language="ta")
+        result = ai.ask_mistral("மழை நிலை என்ன?", district_id=None, language="ta")
         self.assertTrue(result["available"])
         self.assertIn("Respond entirely in natural Tamil (தமிழ்)", self.sent["messages"][0]["content"])
         self.assertEqual(result["structured_answer"]["historical_context"], payload["historical_context"])
