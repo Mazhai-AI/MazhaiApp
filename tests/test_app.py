@@ -291,6 +291,11 @@ class AiTests(unittest.TestCase):
         self.assertIn("Respond entirely in natural Tamil (தமிழ்)", self.sent["messages"][0]["content"])
         self.assertEqual(result["structured_answer"]["historical_context"], payload["historical_context"])
 
+    def test_tamil_district_names_resolve_for_ai_questions(self):
+        self.assertEqual(ai._resolve_district("கோயம்புத்தூரில் மழை நிலை என்ன?", "chennai")["id"], "coimbatore")
+        self.assertEqual(ai._resolve_district("சென்னையில் மழை பெய்யுமா?", "coimbatore")["id"], "chennai")
+        self.assertIsNone(ai._resolve_district("பெங்களூரு வானிலை எப்படி?", "chennai"))
+
     def test_unsupported_city_does_not_fall_back_to_selected_tamil_nadu_district(self):
         self.assertIsNone(ai._resolve_district("Will it rain in Bengaluru?", "chennai"))
         self.assertEqual(ai._resolve_district("Rain outlook for Chennai?", "coimbatore")["id"], "chennai")
