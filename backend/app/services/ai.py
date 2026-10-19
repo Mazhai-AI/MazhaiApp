@@ -229,7 +229,7 @@ def _build_rainfall_alert(forecast_summary, history_summary=None):
     return {
         "level": level,
         "rationale": rationale,
-        "basis": "Preliminary in-app rainfall screening only: High attention at 50 mm or more in a forecast day or 48-hour window; Elevated at 25 mm or more; Watch at 10 mm or more, or at least 60% rain probability with at least 5 mm indicated; Routine otherwise. These bands are not official IMD categories, validated impact thresholds, or a flood-risk model.",
+        "basis": "Preliminary in-app rainfall screening only: High attention at 50 mm or more in a forecast day or 48-hour window; Elevated at 25 mm or more; Watch at 10 mm or more, or at least 60% rain probability with at least 5 mm indicated; Routine otherwise. One context step is added (Routine to Watch or Watch to Elevated) if recent historical rainfall was at least 50 mm over 7 days or at least 20 mm on a day and additional forecast rain of 5 mm or more is indicated. These bands are not official IMD categories, validated impact thresholds, or a flood-risk model.",
         "next_48h_mm": rain_48h if _is_number(rain_48h) else None,
         "peak_probability_pct": peak_probability if _is_number(peak_probability) else None,
         "max_daily_mm": max_daily if _is_number(max_daily) else None,
@@ -308,6 +308,7 @@ def ask_mistral(question, district_id=None, start=None, end=None, history=None):
     forecast_summary = None
     history_summary = None
 
+    alert_history_summary = None
     if chosen_district:
         try:
             forecast = get_forecast(chosen_district["id"])
@@ -316,18 +317,42 @@ def ask_mistral(question, district_id=None, start=None, end=None, history=None):
         except (ValueError, ProviderError) as exc:
             evidence.append({"type": "forecast_unavailable", "location": chosen_district["name"], "detail": str(exc)})
 
-        history_end = end or now_ist.date().isoformat()
-        history_start = start or (now_ist.date() - timedelta(days=29)).isoformat()
+        yesterday = now_ist.date() - timedelta(days=1)
+        history_start = date.fromisoformat(start) if start else (now_ist.date() - timedelta(days=30))
+        history_end = date.fromisoformat(end) if end else yesterday
+        # A daily historical total for today is incomplete, so use the latest completed calendar day.
+        if history_end >= now_ist.date():
+            history_end = yesterday
+        if history_start > history_end:
+            history_start = history_end
+        start_text, end_text = history_start.isoformat(), history_end.isoformat()
         try:
-            hist = get_history(chosen_district["id"], history_start, history_end)
-            history_summary = _summarize_history(hist, history_start, history_end, now_ist.date())
+            hist = get_history(chosen_district["id"], start_text, end_text)
+            history_summary = _summarize_history(hist, start_text, end_text, now_ist.date())
             evidence.append({"type": "historical_rainfall_summary", "location": chosen_district["name"], "data": history_summary})
+            alert_history_summary = history_summary
         except (ValueError, ProviderError) as exc:
             evidence.append({"type": "history_unavailable", "location": chosen_district["name"], "detail": str(exc)})
+
+        recent_start = (now_ist.date() - timedelta(days=30)).isoformat()
+        recent_end = yesterday.isoformat()
+        covers_recent_window = history_start <= (now_ist.date() - timedelta(days=6)) and history_end >= yesterday
+        if not covers_recent_window:
+            try:
+                recent_history = get_history(chosen_district["id"], recent_start, recent_end)
+                alert_history_summary = _summarize_history(recent_history, recent_start, recent_end, now_ist.date())
+                evidence.append({
+                    "type": "recent_historical_rainfall_summary",
+                    "location": chosen_district["name"],
+                    "data": alert_history_summary,
+                })
+            except (ValueError, ProviderError) as exc:
+                evidence.append({"type": "recent_history_unavailable", "location": chosen_district["name"], "detail": str(exc)})
+
     else:
         evidence.append({"type": "scope", "detail": "No supported Tamil Nadu district was selected or named. Ask the user to select/name a supported district; do not substitute another location."})
 
-    alert = _build_rainfall_alert(forecast_summary, history_summary) if chosen_district else {
+    alert = _build_rainfall_alert(forecast_summary, alert_history_summary) if chosen_district else {
         "level": "Unable to assess",
         "rationale": "No supported district-specific forecast evidence is available.",
         "basis": "Select a supported Tamil Nadu district to assess its forecast.",
