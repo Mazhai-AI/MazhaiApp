@@ -347,7 +347,7 @@ class AiTests(unittest.TestCase):
         ai.urlopen = self._fake(json.dumps(payload, ensure_ascii=False))
         result = ai.ask_mistral("மழை நிலை என்ன?", district_id=None, language="ta")
         self.assertTrue(result["available"])
-        self.assertIn("Respond entirely in natural Tamil (தமிழ்)", self.sent["messages"][0]["content"])
+        self.assertIn("Write every user-facing value in natural, clear everyday Tamil (தமிழ்)", self.sent["messages"][0]["content"])
         self.assertEqual(result["structured_answer"]["historical_context"], payload["historical_context"])
 
     def test_tamil_district_names_resolve_for_ai_questions(self):
