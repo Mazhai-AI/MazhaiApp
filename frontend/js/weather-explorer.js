@@ -1,3 +1,4 @@
+import { getLanguage } from "./i18n.js";
 /* Mazhai AI interactive geographic weather explorer.
    Add this module after /js/app.js in frontend/index.html.
    Real state boundaries are loaded from an openly hosted GeoJSON file.
@@ -376,7 +377,7 @@ function weatherDetails(forecast) {
     <div><span>Humidity</span><b>${number(c.humidity_pct, 0)}%</b></div>
     <div><span>Wind</span><b>${number(c.wind_kmh)} km/h</b></div>
   </div>
-  <p class="wx-source-note">${safe(forecast?.source || "Weather source unavailable")} · ${forecast?.retrieved_at ? `updated ${safe(new Date(forecast.retrieved_at).toLocaleString())}` : "update time unavailable"}${forecast?.stale ? " · cached/stale data" : ""}</p>
+  <p class="wx-source-note">${safe(forecast?.source || "Weather source unavailable")} · ${forecast?.retrieved_at ? `updated ${safe(new Date(forecast.retrieved_at).toLocaleString(getLanguage() === "ta" ? "ta-IN" : "en-IN"))}` : "update time unavailable"}${forecast?.stale ? " · cached/stale data" : ""}</p>
   <p class="wx-data-note">Weather is a model/grid estimate at this district’s representative coordinates, not a local weather-station observation. It is not an official warning.</p>`;
 }
 

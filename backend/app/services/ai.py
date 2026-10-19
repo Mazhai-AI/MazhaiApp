@@ -60,18 +60,84 @@ def _is_number(value):
 
 
 def _resolve_district(question, district_id):
-    """Resolve explicit supported districts; never silently substitute the selected district for a known out-of-scope city."""
+    """Resolve English or Tamil district names, including common colloquial spellings."""
     text = str(question or "")
     unsupported_places = (
         "bengaluru", "bangalore", "hyderabad", "mumbai", "delhi", "new delhi",
         "kolkata", "pune", "kochi", "thiruvananthapuram", "kerala", "karnataka",
         "andhra pradesh", "telangana", "maharashtra", "pondicherry", "puducherry",
         "goa", "jaipur", "lucknow", "ahmedabad", "bhopal",
+        "பெங்களூரு", "பெங்களூர்", "ஹைதராபாத்", "மும்பை", "டெல்லி", "புது டெல்லி",
+        "கொல்கத்தா", "புனே", "கொச்சி", "திருவனந்தபுரம்", "கேரளா", "கர்நாடகா",
+        "ஆந்திரப் பிரதேசம்", "தெலங்கானா", "மகாராஷ்டிரா", "புதுச்சேரி", "கோவா",
+        "ஜெய்ப்பூர்", "லக்னோ", "அகமதாபாத்", "போபால்",
     )
-    if any(re.search(r"(?<![\w])" + re.escape(place) + r"(?![\w])", text, re.IGNORECASE) for place in unsupported_places):
+    def candidates(name):
+        values = [name]
+        if any(ord(ch) > 127 for ch in name):
+            if name.endswith("ம்"):
+                stem = name[:-2]
+                values.extend((stem + "த்தில்", stem + "த்துக்கு", stem + "த்தின்"))
+            elif name.endswith(("ர்", "ல்", "ள்", "ன்")):
+                stem = name[:-1]
+                values.extend((stem + "ில்", stem + "ுக்கு", stem + "ின்"))
+        return tuple(dict.fromkeys(values))
+
+    def mentions(name):
+        for candidate in candidates(name):
+            if any(ord(ch) > 127 for ch in candidate):
+                matched = re.search(re.escape(candidate), text, re.IGNORECASE)
+            else:
+                matched = re.search(r"(?<![\w])" + re.escape(candidate) + r"(?![\w])", text, re.IGNORECASE)
+            if matched:
+                return True
+        return False
+
+    if any(mentions(place) for place in unsupported_places):
         return None
 
     aliases = {
+        "ariyalur": ("அரியலூர்",),
+        "chengalpattu": ("செங்கல்பட்டு",),
+        "chennai": ("சென்னை",),
+        "coimbatore": ("கோயம்புத்தூர்", "கோவை"),
+        "cuddalore": ("கடலூர்",),
+        "dharmapuri": ("தர்மபுரி",),
+        "dindigul": ("திண்டுக்கல்",),
+        "erode": ("ஈரோடு",),
+        "kallakurichi": ("கள்ளக்குறிச்சி",),
+        "kanchipuram": ("காஞ்சிபுரம்",),
+        "kanniyakumari": ("கன்னியாகுமரி",),
+        "karur": ("கரூர்",),
+        "krishnagiri": ("கிருஷ்ணகிரி",),
+        "madurai": ("மதுரை",),
+        "mayiladuthurai": ("மயிலாடுதுறை",),
+        "nagapattinam": ("நாகப்பட்டினம்",),
+        "namakkal": ("நாமக்கல்",),
+        "nilgiris": ("நீலகிரி",),
+        "perambalur": ("பெரம்பலூர்",),
+        "pudukkottai": ("புதுக்கோட்டை",),
+        "ramanathapuram": ("இராமநாதபுரம்", "ராமநாதபுரம்"),
+        "ranipet": ("ராணிப்பேட்டை",),
+        "salem": ("சேலம்",),
+        "sivaganga": ("சிவகங்கை",),
+        "tenkasi": ("தென்காசி",),
+        "thanjavur": ("தஞ்சாவூர்",),
+        "theni": ("தேனி",),
+        "thoothukudi": ("தூத்துக்குடி", "tuticorin"),
+        "tiruchirappalli": ("திருச்சிராப்பள்ளி", "திருச்சி", "trichy"),
+        "tirunelveli": ("திருநெல்வேலி", "நெல்லை"),
+        "tirupathur": ("திருப்பத்தூர்",),
+        "tiruppur": ("திருப்பூர்",),
+        "tiruvallur": ("திருவள்ளூர்",),
+        "tiruvannamalai": ("திருவண்ணாமலை",),
+        "tiruvarur": ("திருவாரூர்",),
+        "vellore": ("வேலூர்",),
+        "viluppuram": ("விழுப்புரம்", "villupuram"),
+        "virudhunagar": ("விருதுநகர்",),
+        "nilgiris": ("நீலகிரி", "the nilgiris",),
+    }
+    legacy_aliases = {
         "tiruchirappalli": ("trichy",),
         "thoothukudi": ("tuticorin",),
         "kanniyakumari": ("kanyakumari",),
@@ -80,10 +146,12 @@ def _resolve_district(question, district_id):
         "viluppuram": ("villupuram",),
     }
     for district in sorted(DISTRICTS, key=lambda item: len(item["name"]), reverse=True):
-        names = (district["name"], district["id"], *aliases.get(district["id"], ()))
-        if any(re.search(r"(?<![\w])" + re.escape(name) + r"(?![\w])", text, re.IGNORECASE) for name in names):
-            return district
+        names = (district["name"], district["id"], *legacy_aliases.get(district["id"], ()), *aliases.get(district["id"], ()))
+        for name in names:
+            if mentions(name):
+                return district
     return next((item for item in DISTRICTS if item["id"] == str(district_id or "").strip().casefold()), None)
+
 
 def _summarize_forecast(forecast):
     """Create compact, explicit forecast evidence and preserve unknown values as unknown."""
@@ -297,7 +365,7 @@ def _structured_answer_markdown(answer):
     return "\n\n".join(f"{heading}\n{body}" for heading, body in sections)
 
 
-def ask_mistral(question, district_id=None, start=None, end=None, history=None):
+def ask_mistral(question, district_id=None, start=None, end=None, history=None, language="en"):
     api_key = os.getenv("MISTRAL_API_KEY", "").strip()
     if not api_key:
         return {"available": False, "message": "Mistral AI is not configured. Set MISTRAL_API_KEY in the backend environment to enable evidence-grounded analysis."}
@@ -362,7 +430,9 @@ def ask_mistral(question, district_id=None, start=None, end=None, history=None):
 
     model = os.getenv("MISTRAL_MODEL", "ministral-8b-2512").strip() or "ministral-8b-2512"
     location_name = chosen_district["name"] if chosen_district else None
+    language_instruction = ("Respond entirely in natural Tamil (தமிழ்), using clear, everyday Tamil and retaining exact numeric values, units, dates, and place names. Keep the required JSON field keys exactly as specified in English, but write all field values in Tamil." if language == "ta" else "Respond entirely in English. Keep the required JSON field keys exactly as specified.")
     system = (
+        language_instruction + " "
         "You are Mazhai AI, a careful rainfall evidence explainer for Tamil Nadu. "
         f"Today is {now_ist:%A, %d %B %Y} (India Standard Time). "
         "Use only the supplied JSON evidence for factual claims. Never invent measurements, incidents, "
