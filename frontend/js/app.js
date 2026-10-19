@@ -235,12 +235,36 @@ function renderAssistantReply(container,result,reply){
     const slug=level.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")||"unknown";
     const card=document.createElement("section");card.className="ai-alert-card ai-alert-"+slug;
     const head=document.createElement("div");head.className="ai-alert-head";
-    const title=document.createElement("strong");title.className="ai-alert-title";title.textContent="Rainfall attention · "+level;
+    const title=document.createElement("strong");title.className="ai-alert-title";title.textContent="Rainfall attention · "+(result?.location?result.location+" · ":"")+level;
     const badge=document.createElement("span");badge.className="ai-alert-badge";badge.textContent="APP INDICATOR · NOT OFFICIAL";
     head.append(title,badge);
     const rationale=document.createElement("p");rationale.className="ai-alert-rationale";rationale.textContent=alert.rationale||"The available evidence could not determine an attention level.";
     const note=document.createElement("p");note.className="ai-alert-note";note.textContent="Preliminary forecast screening only. This is not an IMD warning or a flood prediction.";
     card.append(head,rationale,note);container.append(card);
+  }
+  if(result?.structured_answer&&typeof result.structured_answer==="object"){
+    const answer=result.structured_answer;
+    const sections=[
+      ["Current conditions and forecast","current_conditions_and_forecast"],
+      ["Historical context","historical_context"],
+      ["What to watch next","what_to_watch_next"],
+      ["Recommended actions","recommended_actions"],
+      ["Confidence and limitations","confidence_and_limitations"]
+    ];
+    for(const [heading,key] of sections){
+      const section=document.createElement("section");section.className="assistant-answer-section";
+      const title=document.createElement("h4");title.textContent=heading;section.append(title);
+      const value=answer[key];
+      if(Array.isArray(value)){
+        const list=document.createElement("ul");
+        value.filter(item=>typeof item==="string"&&item.trim()).forEach(item=>{const li=document.createElement("li");li.textContent=item;list.append(li)});
+        section.append(list);
+      }else{
+        const p=document.createElement("p");p.textContent=typeof value==="string"&&value.trim()?value:"No details were returned for this section.";section.append(p);
+      }
+      container.append(section);
+    }
+    return;
   }
   const body=document.createElement("div");body.className="assistant-markdown";body.innerHTML=renderMarkdown(reply);
   container.append(body);
