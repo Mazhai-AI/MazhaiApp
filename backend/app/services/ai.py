@@ -92,6 +92,8 @@ def _summarize_forecast(forecast):
                               if isinstance(row, dict) and _is_number(row.get("precipitation_probability_pct"))]
     max_daily = max(daily_values, key=lambda pair: pair[1]) if daily_values else (None, None)
     current = forecast.get("current") if isinstance(forecast.get("current"), dict) else {}
+    hourly_total = round(sum(hourly_values), 1) if len(hourly_values) == len(hourly_window) and len(hourly_window) == 48 else None
+    daily_valid_count = len(daily_values)
     return {
         "source": forecast.get("source"),
         "retrieved_at": forecast.get("retrieved_at"),
@@ -99,9 +101,10 @@ def _summarize_forecast(forecast):
         "stale": bool(forecast.get("stale")),
         "current": current,
         "forecast_days_returned": len(daily),
+        "valid_daily_precipitation_values": daily_valid_count,
         "daily_forecast": daily,
         "next_48_hours": {
-            "precipitation_mm": round(sum(hourly_values), 1) if hourly_values else None,
+            "precipitation_mm": hourly_total,
             "hours_returned": len(hourly_window),
             "valid_precipitation_hours": len(hourly_values),
             "peak_precipitation_probability_pct": max(probability_values) if probability_values else None,
@@ -139,7 +142,7 @@ def _summarize_history(history, requested_start, requested_end, today):
     }
 
 
-def _build_rainfall_alert(forecast_summary):
+def _build_rainfall_alert(forecast_summary, history_summary=None):
     """Transparent preliminary screening bands, not an official warning or calibrated risk score."""
     if not forecast_summary:
         return {
@@ -167,6 +170,8 @@ def _build_rainfall_alert(forecast_summary):
     daily_peak = max_daily if _is_number(max_daily) else 0
     window_peak = rain_48h if _is_number(rain_48h) else 0
     amount_peak = max(daily_peak, window_peak)
+    valid_days = forecast_summary.get("valid_daily_precipitation_values", 0)
+    returned_days = forecast_summary.get("forecast_days_returned", 0)
     if amount_peak >= 50:
         level = "High attention"
     elif amount_peak >= 25:
@@ -176,6 +181,23 @@ def _build_rainfall_alert(forecast_summary):
     else:
         level = "Routine"
 
+    recent_total = history_summary.get("last_7_calendar_days_total_mm") if history_summary else None
+    recent_max = (history_summary.get("maximum_daily_record") or {}).get("precipitation_mm") if history_summary else None
+    recent_max_date = (history_summary.get("maximum_daily_record") or {}).get("date") if history_summary else None
+    has_recent_heavy_rain = (_is_number(recent_total) and recent_total >= 50) or (_is_number(recent_max) and recent_max >= 20)
+    upcoming_rain = (_is_number(rain_48h) and rain_48h >= 5) or (_is_number(max_daily) and max_daily >= 5)
+    history_modifier = False
+    if has_recent_heavy_rain and upcoming_rain and level == "Routine":
+        level = "Watch"
+        history_modifier = True
+    elif has_recent_heavy_rain and upcoming_rain and level == "Watch":
+        level = "Elevated"
+        history_modifier = True
+
+    # Don't label an incomplete forecast Routine just because only a few values arrived.
+    if level == "Routine" and returned_days and valid_days < min(5, returned_days):
+        level = "Unable to assess"
+
     if _is_number(max_daily) and max_daily == amount_peak and max_daily >= 25:
         rationale = f"The highest daily forecast is {max_daily:.1f} mm on {max_day.get('date') or 'an unspecified forecast date'}."
     elif _is_number(rain_48h) and rain_48h == amount_peak and rain_48h >= 10:
@@ -184,6 +206,14 @@ def _build_rainfall_alert(forecast_summary):
         rationale = f"Rainfall probability peaks at {peak_probability:.0f}% and the available forecast indicates some rainfall."
     else:
         rationale = "The available forecast amounts are below the app's Watch threshold."
+    if history_modifier:
+        if _is_number(recent_total):
+            rationale += f" Recent historical rainfall was {recent_total:.1f} mm across the last 7 calendar days."
+        if _is_number(recent_max):
+            rationale += f" The largest returned recent daily record was {recent_max:.1f} mm on {recent_max_date or 'an unspecified date'}."
+        rationale += " Recent rainfall plus additional forecast rain raises the app's attention level; it does not prove saturated ground or flooding."
+    elif history_summary and (has_recent_heavy_rain and not upcoming_rain):
+        rationale += " Recent historical rainfall was high, but the currently available forecast does not indicate enough additional rain to trigger the app's historical-context adjustment."
     if forecast_summary.get("stale"):
         rationale += " The forecast is stale cached data, so refresh and verify current conditions."
     return {
@@ -194,6 +224,10 @@ def _build_rainfall_alert(forecast_summary):
         "peak_probability_pct": peak_probability if _is_number(peak_probability) else None,
         "max_daily_mm": max_daily if _is_number(max_daily) else None,
         "max_daily_date": max_day.get("date"),
+        "recent_7_day_historical_total_mm": recent_total if _is_number(recent_total) else None,
+        "recent_historical_max_daily_mm": recent_max if _is_number(recent_max) else None,
+        "recent_historical_max_daily_date": recent_max_date,
+        "historical_context_applied": history_modifier,
         "forecast_stale": bool(forecast_summary.get("stale")),
         "is_official": False,
     }
@@ -229,7 +263,7 @@ def ask_mistral(question, district_id=None, start=None, end=None, history=None):
     else:
         evidence.append({"type": "scope", "detail": "No supported Tamil Nadu district was selected or named. Ask the user to select/name a supported district; do not substitute another location."})
 
-    alert = _build_rainfall_alert(forecast_summary) if chosen_district else {
+    alert = _build_rainfall_alert(forecast_summary, history_summary) if chosen_district else {
         "level": "Unable to assess",
         "rationale": "No supported district-specific forecast evidence is available.",
         "basis": "Select a supported Tamil Nadu district to assess its forecast.",
