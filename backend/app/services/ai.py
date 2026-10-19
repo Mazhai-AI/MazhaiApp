@@ -60,8 +60,17 @@ def _is_number(value):
 
 
 def _resolve_district(question, district_id):
-    """An explicitly named supported district takes precedence over the selected UI district."""
+    """Resolve explicit supported districts; never silently substitute the selected district for a known out-of-scope city."""
     text = str(question or "")
+    unsupported_places = (
+        "bengaluru", "bangalore", "hyderabad", "mumbai", "delhi", "new delhi",
+        "kolkata", "pune", "kochi", "thiruvananthapuram", "kerala", "karnataka",
+        "andhra pradesh", "telangana", "maharashtra", "pondicherry", "puducherry",
+        "goa", "jaipur", "lucknow", "ahmedabad", "bhopal",
+    )
+    if any(re.search(r"(?<![\w])" + re.escape(place) + r"(?![\w])", text, re.IGNORECASE) for place in unsupported_places):
+        return None
+
     aliases = {
         "tiruchirappalli": ("trichy",),
         "thoothukudi": ("tuticorin",),
@@ -74,16 +83,7 @@ def _resolve_district(question, district_id):
         names = (district["name"], district["id"], *aliases.get(district["id"], ()))
         if any(re.search(r"(?<![\w])" + re.escape(name) + r"(?![\w])", text, re.IGNORECASE) for name in names):
             return district
-    unsupported_places = (
-        "bengaluru", "bangalore", "hyderabad", "mumbai", "delhi", "new delhi",
-        "kolkata", "pune", "kochi", "thiruvananthapuram", "kerala", "karnataka",
-        "andhra pradesh", "telangana", "maharashtra", "karnataka", "pondicherry",
-        "puducherry", "goa", "jaipur", "lucknow", "ahmedabad", "bhopal",
-    )
-    if any(re.search(r"(?<![\w])" + re.escape(place) + r"(?![\w])", text, re.IGNORECASE) for place in unsupported_places):
-        return None
     return next((item for item in DISTRICTS if item["id"] == str(district_id or "").strip().casefold()), None)
-
 
 def _summarize_forecast(forecast):
     """Create compact, explicit forecast evidence and preserve unknown values as unknown."""
