@@ -456,7 +456,7 @@ def _structured_answer_markdown(answer):
 
 
 def _answer_language_mismatch(answer, language):
-    """Detect a clearly wrong script in user-facing response values, allowing names/numbers/acronyms."""
+    """Check each user-facing value, allowing numbers, acronyms, and proper names."""
     if isinstance(answer, dict):
         values = []
         for value in answer.values():
@@ -464,22 +464,29 @@ def _answer_language_mismatch(answer, language):
                 values.append(value)
             elif isinstance(value, list):
                 values.extend(item for item in value if isinstance(item, str))
-        text = " ".join(values)
     elif isinstance(answer, str):
-        text = answer
+        values = [answer]
     else:
         return True
 
-    letters = [char for char in text if char.isalpha()]
-    if not letters:
-        return True
-    tamil = sum("\u0B80" <= char <= "\u0BFF" for char in letters)
-    ratio = tamil / len(letters)
-    if language == "ta":
-        # Tamil prose must contain substantial Tamil script; technical names and acronyms may remain Latin.
-        return len(letters) >= 5 and (tamil < 5 or ratio < 0.15)
-    # English answers may contain Tamil place names, but should not be predominantly Tamil prose.
-    return tamil >= 5 and ratio >= 0.20
+    checked = 0
+    for value in values:
+        letters = [char for char in value if char.isalpha()]
+        if len(letters) < 5:
+            # Very short labels/acronyms are not meaningful language samples.
+            continue
+        checked += 1
+        tamil = sum("\\u0B80" <= char <= "\\u0BFF" for char in letters)
+        ratio = tamil / len(letters)
+        if language == "ta":
+            # Each prose field/list item should be Tamil, not merely one Tamil sentence in an English answer.
+            if tamil < 5 or ratio < 0.15:
+                return True
+        elif tamil >= 5 and ratio >= 0.20:
+            return True
+    return checked == 0
+
+
 
 
 def _language_fallback(language):
