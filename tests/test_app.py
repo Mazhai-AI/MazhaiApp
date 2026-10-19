@@ -44,6 +44,35 @@ class BackendTests(unittest.TestCase):
     def test_env_loaded_before_db_import(self):
         self.assertEqual(str(db.DB_PATH), os.environ["MAZHAI_DB_PATH"])
 
+    def test_forecast_hourly_window_starts_from_current_timestamp(self):
+        from datetime import datetime, timedelta
+
+        start = datetime.fromisoformat("2026-10-19T00:00")
+        times = [(start + timedelta(hours=i)).isoformat(timespec="minutes") for i in range(72)]
+        raw = {
+            "current": {"time": "2026-10-19T12:00", "temperature_2m": 25,
+                        "relative_humidity_2m": 70, "precipitation": 0.2,
+                        "wind_speed_10m": 8, "wind_direction_10m": 180, "cloud_cover": 30},
+            "daily": {"time": [f"2026-10-{day:02d}" for day in range(19, 26)],
+                      "precipitation_sum": [0.0] * 7,
+                      "precipitation_probability_max": [10] * 7,
+                      "temperature_2m_max": [30] * 7, "temperature_2m_min": [24] * 7},
+            "hourly": {"time": times, "precipitation": list(range(72)),
+                       "precipitation_probability": [20] * 72, "temperature_2m": [25] * 72},
+            "timezone": "Asia/Kolkata",
+        }
+        old_urlopen = weather.urlopen
+        try:
+            weather.urlopen = lambda req, timeout=None: FakeResp(raw)
+            forecast = weather.get_forecast("chennai", force=True)
+        finally:
+            weather.urlopen = old_urlopen
+
+        self.assertEqual(len(forecast["hourly"]), 48)
+        self.assertEqual(forecast["hourly"][0]["time"], "2026-10-19T12:00")
+        self.assertEqual(forecast["hourly"][0]["precipitation_mm"], 12)
+        self.assertEqual(forecast["hourly"][-1]["time"], "2026-10-21T11:00")
+
     def test_history_normalizes_district_case(self):
         weather.urlopen = archive_ok
         weather.get_history("CHENNAI", "2026-10-01", "2026-10-02", force=True)
