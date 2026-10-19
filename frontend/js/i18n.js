@@ -103,6 +103,36 @@ const TA = {
   "District totals": "மாவட்ட மொத்தங்கள்", "Sorted by returned precipitation total": "பெறப்பட்ட மழைப்பொழிவு மொத்தத்தின்படி வரிசைப்படுத்தப்பட்டது",
   "Total (mm)": "மொத்தம் (மிமீ)", "Valid days": "செல்லுபடியாகும் நாட்கள்", "Status": "நிலை",
   "Retrieved": "பெறப்பட்டது", "Unavailable": "கிடைக்கவில்லை", "Retry": "மீண்டும் முயற்சிக்கவும்",
+  "7-day precipitation": "7 நாள் மழைப்பொழிவு",
+  "Rainfall timing": "மழைப்பொழிவு நேரம்",
+  "Air temperature · Celsius": "காற்றின் வெப்பநிலை · செல்சியஸ்",
+  "Atmospheric conditions": "வளிமண்டல நிலைகள்",
+  "Data provenance": "தரவு ஆதாரம்",
+  "Provider and retrieval metadata": "வழங்குநர் மற்றும் தரவு பெறப்பட்ட விவரங்கள்",
+  "Source": "ஆதாரம்",
+  "Retrieved at": "பெறப்பட்ட நேரம்",
+  "Data status": "தரவு நிலை",
+  "Coordinate type": "இடக்குறியீட்டு வகை",
+  "District reference point": "மாவட்டப் பிரதிநிதி இடம்",
+  "Weather loads on selection": "தேர்ந்தெடுத்தால் வானிலை ஏற்றப்படும்",
+  "Provider forecast · representative district coordinates": "வழங்குநர் முன்னறிவிப்பு · மாவட்டப் பிரதிநிதி இடக்குறியீடுகள்",
+  "Today": "இன்று",
+  "Probability not provided": "மழை நிகழ்தகவு தரப்படவில்லை",
+  "Open-Meteo model data · representative coordinates": "Open-Meteo மாதிரித் தரவு · மாவட்டப் பிரதிநிதி இடக்குறியீடுகள்",
+  "Explore district": "மாவட்டத்தை ஆராயவும்",
+  "Stale cache": "காலாவதியான தேக்கத் தரவு",
+  "Cached": "தேக்கத் தரவு",
+  "Fresh response": "புதிய பதில்",
+  "cached/stale": "தேக்கப்பட்டது / காலாவதியானது",
+  "cached": "தேக்கப்பட்டது",
+  "retrieved": "பெறப்பட்டது",
+  "Historical grid/reanalysis estimate, not direct station observation.": "வரலாற்று கட்டமைக்கப்பட்ட மறுபகுப்பாய்வு மதிப்பீடு; நேரடி நிலைய அளவீடு அல்ல.",
+  "7-day sum is a model output, not a warning": "7 நாள் மொத்தம் மாதிரி முடிவு மட்டுமே; எச்சரிக்கை அல்ல.",
+  "Rainfall totals are model estimates, not direct station readings.": "மழைப்பொழிவு மொத்தங்கள் மாதிரி மதிப்பீடுகள்; நேரடி நிலைய அளவீடுகள் அல்ல.",
+  "APP INDICATOR · NOT OFFICIAL": "பயன்பாட்டு குறியீடு · அதிகாரப்பூர்வமல்ல",
+  "Preliminary forecast screening only. This is not an IMD warning or a flood prediction.": "முன்னறிவிப்பின் ஆரம்ப நிலைத் திரையிடல் மட்டுமே. இது IMD எச்சரிக்கையோ வெள்ள முன்னறிவிப்போ அல்ல.",
+  "The available evidence could not determine an attention level.": "கிடைத்த ஆதாரங்களால் கவனநிலையைத் தீர்மானிக்க முடியவில்லை.",
+  "Source unavailable": "ஆதாரம் கிடைக்கவில்லை",
   "Rainfall attention": "மழைப்பொழிவு கவனநிலை", "Current conditions and forecast": "தற்போதைய நிலை மற்றும் முன்னறிவிப்பு",
   "Historical context": "வரலாற்றுப் பின்னணி", "What to watch next": "அடுத்து கவனிக்க வேண்டியவை",
   "Recommended actions": "பரிந்துரைக்கப்படும் நடவடிக்கைகள்", "Confidence and limitations": "நம்பகத்தன்மை மற்றும் வரம்புகள்",
@@ -188,6 +218,16 @@ function translatePhrase(value, language) {
   if (match) return match[1] + " மாவட்டங்கள்";
   match = value.match(/^(\d+) mapped areas loaded from the configured GeoJSON\..*$/);
   if (match) return "கட்டமைக்கப்பட்ட GeoJSON-இலிருந்து " + match[1] + " வரைபடப் பகுதிகள் ஏற்றப்பட்டன.";
+  match = value.match(/^(\d+(?:\.\d+)?)% chance$/);
+  if (match) return match[1] + "% வாய்ப்பு";
+  match = value.match(/^7-day forecast total: (.+) mm$/);
+  if (match) return "7 நாள் மழை முன்னறிவிப்பு மொத்தம்: " + match[1] + " மிமீ";
+  match = value.match(/^(\d+(?:\.\d+)?) mm forecast total from (.+)\. This is a model forecast, not a measured district total\.$/);
+  if (match) return match[1] + " மிமீ முன்னறிவிப்பு மழை மொத்தம் (" + match[2] + "). இது மாதிரி முன்னறிவிப்பு; அளவிடப்பட்ட மாவட்ட மொத்தம் அல்ல.";
+  match = value.match(/^(\d+) of (\d+) forecast days have at least 1 mm indicated\. Highest daily amount: (.+) mm on (.+)\.$/);
+  if (match) return match[2] + " முன்னறிவிப்பு நாட்களில் " + match[1] + நாட்களில் குறைந்தது 1 மிமீ மழை எதிர்பார்க்கப்படுகிறது. அதிகபட்ச தினசரி அளவு " + match[3] + " மிமீ (" + match[4] + ").";
+  match = value.match(/^([^·]+) · current$/);
+  if (match) return match[1] + " · தற்போதைய நிலை";
   match = value.match(/^Cannot connect to Mazhai AI API: (.+)$/);
   if (match) return "மழை AI API-ஐ இணைக்க முடியவில்லை: " + match[1];
   return value;
