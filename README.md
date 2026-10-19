@@ -13,7 +13,7 @@ Mazhai AI is a full-stack web application with an HTML/CSS/vanilla JavaScript fr
 - Source registry, data freshness, cached-data fallback, and transparent provider limitations.
 - Optional Mistral assistant that receives retrieved weather/history evidence and returns validated structured sections (current forecast, historical context, what to watch, actions, and limitations).
 - English/Tamil interface language selector in Settings, saved in the browser; the AI assistant follows the selected language for response content.
-- English/Tamil interface language selector in Settings, saved in the browser; the AI assistant follows the selected language for response content.
+- The AI system prompt emphasizes evidence-grounded answers, conversational follow-up continuity, concise recommendations, valid structured output, and clear handling of missing or stale data.
 - An explicitly labelled app-generated rainfall-attention indicator that combines upcoming forecast rainfall with recent historical rainfall; it never claims to be an official warning.
 - API validation, bounded upstream timeouts, SQLite cache, and tests.
 
@@ -24,7 +24,7 @@ Mazhai AI is a full-stack web application with an HTML/CSS/vanilla JavaScript fr
 - IMD data and official warnings are listed as not integrated. The application links to IMD, but does not claim to ingest or reproduce official warnings.
 - This initial version does not ingest verified historical flood/incident reports, does not train a local ML model, and does not issue flood forecasts or emergency alerts.
 - The dashboard signal and AI rainfall-attention bands are preliminary app-generated screening indicators based on available forecast amounts and recent rainfall context. Their thresholds are not calibrated, validated impact thresholds, or official IMD categories; they are not flood predictions or emergency alerts. Follow official IMD bulletins and local authority instructions for safety decisions.
-- Mistral is an optional explanation layer, not a numerical weather prediction engine.
+- Mistral is an optional explanation layer, not a numerical weather prediction engine. Its prompt directs it to use retrieved evidence rather than invent measurements, avoid treating prior assistant responses as facts, answer narrow follow-ups directly, and retain the user's selected English/Tamil response language.
 
 ## Requirements
 
