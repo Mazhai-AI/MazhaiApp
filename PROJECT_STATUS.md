@@ -1,6 +1,6 @@
 # Mazhai AI — Project Status
 
-Updated: 2026-10-19
+Updated: 2026-10-20
 
 ## Completed in this implementation
 - [x] Responsive dark dashboard shell with navigation for all requested sections.
@@ -13,6 +13,15 @@ Updated: 2026-10-19
 - [x] Leaflet map markers, overview metrics, charts, CSV export, district explorer, assistant, sources, settings.
 - [x] Documentation, `.env.example`, launch script, and deterministic tests.
 
+## Added in the hardening pass (2026-10-20)
+- [x] Fixed three escaping bugs in `ai.py`: the trailing-comma JSON repair never matched, the array-salvage escape handling was dead code, and combined retry instructions were joined with a literal `\n\n` instead of newlines.
+- [x] `.env` and `data/mazhai.db` removed from git tracking (they were already listed in `.gitignore`). **A Mistral key was committed earlier; rotate it** — it remains in git history.
+- [x] Upstream: one retry for transient failures, longer cache TTL for settled historical ranges, `api_cache` pruning at startup.
+- [x] SQLite WAL mode and busy timeout for the threaded district comparison.
+- [x] Security headers, gzip, thread-safe AI rate limiter that no longer grows without bound.
+- [x] `GET /api/weather/statewide` and a statewide-coloured district map (single multi-location upstream request).
+- [x] Skip link and `aria-current` navigation state.
+
 ## Explicitly not completed / limitations
 - IMD observation ingestion and official warning ingestion are not implemented.
 - No verified historical flood/incident dataset is connected.
@@ -23,8 +32,10 @@ Updated: 2026-10-19
 - Real upstream API access and Mistral credentials must be verified in the target runtime.
 
 ## Validation
-- `python -m unittest discover -s tests -v`: **10 tests passed**.
+- `python -m unittest discover -s tests -v`: **55 tests passed**. `node tests/test_markdown_renderer.cjs` and `node tests/test_i18n.cjs`: passed.
 - `python -m compileall -q backend tests`: passed.
 - `node --check frontend/js/app.js`: passed.
 - Local Uvicorn smoke test: `/api/health` returned HTTP 200; frontend `/` returned HTTP 200; `/api/districts` returned all 38 districts.
 - Live Open-Meteo request attempted, but the build environment could not reach the upstream network (`URLError`). The app correctly returned HTTP 503 and did not fabricate a forecast. Verify live weather in a network-enabled environment.
+- Statewide forecast: verified against a mocked multi-location upstream response and a local server smoke test (honest 503 without network). It has **not** been run against the live Open-Meteo API from the build environment; confirm the colours appear on the map after deploying.
+- Not covered by automated tests: the map/popup rendering in a real browser.

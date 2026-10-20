@@ -46,3 +46,6 @@ html[lang="ta"] .nav-item{font-size:11px}
 html[lang="ta"] .brand b{letter-spacing:0;font-size:17px}
 html[lang="ta"] .sidebar-label{letter-spacing:.3px}
 html[lang="ta"] .assistant-answer-section p,html[lang="ta"] .assistant-answer-section li{line-height:1.8}
+.skip-link{position:absolute;left:12px;top:-60px;z-index:1000;padding:10px 16px;border-radius:10px;background:var(--cyan);color:#07111f;font-weight:600;text-decoration:none;transition:top .15s}
+.skip-link:focus{top:12px;outline:2px solid var(--text);outline-offset:2px}
+#main-content:focus{outline:none}

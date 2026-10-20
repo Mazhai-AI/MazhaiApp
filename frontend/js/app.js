@@ -20,7 +20,7 @@ async function api(path, options={}) {
 function showView(name){
   if(!views.includes(name)) return;
   $$(".view").forEach(el=>el.classList.toggle("active",el.id===`view-${name}`));
-  $$(".nav-item[data-view]").forEach(el=>el.classList.toggle("active",el.dataset.view===name));
+  $$(".nav-item[data-view]").forEach(el=>{const on=el.dataset.view===name;el.classList.toggle("active",on);if(on)el.setAttribute("aria-current","page");else el.removeAttribute("aria-current")});
   $("#page-title").textContent=({overview:"Overview",live:"Live weather",history:"Rainfall history",districts:"District explorer",forecast:"Forecast & risk",analytics:"Rainfall analytics",assistant:"AI weather assistant",sources:"Data sources",settings:"Settings"})[name];
   $("#sidebar").classList.remove("open"); state.lastView=name;
   if(name==="live") loadLive();
@@ -118,12 +118,25 @@ function initMap(){
   $("#tn-map").addEventListener("click",e=>{const btn=e.target.closest("[data-map-district]");if(btn){selectDistrict(btn.dataset.mapDistrict);showView("districts")}});
   setTimeout(()=>state.map.invalidateSize(),120);
 }
+// Marker colour from a 7-day forecast total; null means the provider gave no usable values (unknown, not zero).
+function forecastColor(total){return typeof total!=="number"?"#71869b":total>=50?"#f1b65b":total>=10?"#4bd5e8":"#39c6b2"}
+function styleMarker(id,name,total,selected){
+  const marker=state.markers.get(id);if(!marker)return;
+  marker.setStyle({fillColor:forecastColor(total),radius:selected?8:6,fillOpacity:.95});
+  marker.setPopupContent(`<b>${escapeHTML(name)}</b><br>${typeof total==="number"?`7-day forecast total: ${fmt(total)} mm`:"7-day forecast total: not available"}<br><small>Open-Meteo model data · representative coordinates</small><br><button data-map-district="${escapeHTML(id)}">Explore district</button>`);
+}
 function renderMapForecast(f){
-  const marker=state.markers.get(f.district.id);if(!marker)return;
+  state.markers.forEach((m,id)=>{if(id!==f.district.id&&m.options.radius===8)m.setRadius(6)});
   const total=(f.daily||[]).reduce((s,d)=>s+(d.precipitation_mm||0),0);
-  const color=total>=50?"#f1b65b":total>=10?"#4bd5e8":"#39c6b2";
-  marker.setStyle({fillColor:color,radius:8,fillOpacity:.95});
-  marker.setPopupContent(`<b>${escapeHTML(f.district.name)}</b><br>7-day forecast total: ${fmt(total)} mm<br><small>Open-Meteo model data · representative coordinates</small><br><button data-map-district="${f.district.id}">Explore district</button>`);
+  styleMarker(f.district.id,f.district.name,total,true);
+}
+// One backend request (one upstream call) colours every district marker instead of only the selected one.
+async function loadStatewideMap(force=false){
+  try{
+    const s=await api(`/weather/statewide${force?"?refresh=true":""}`);
+    state.statewide=s;
+    for(const row of s.districts||[])styleMarker(row.district_id,row.district,typeof row.total_mm==="number"?row.total_mm:null,row.district_id===state.districtId);
+  }catch(e){/* Markers stay neutral grey; the selected district is still coloured by loadOverview. */}
 }
 async function loadLive(){
   const d=district(state.districtId);if(!d)return;
@@ -333,6 +346,7 @@ async function refreshCurrent(force=false){
   try{
     if(force&&state.districtId)await api(`/weather/forecast?district_id=${state.districtId}&refresh=true`);
     await loadOverview();
+    if(force)loadStatewideMap(true);
     if(state.lastView==="live")await loadLive();
     if(state.lastView==="forecast")await loadForecastDetail();
     toast(force?"Refresh complete.":"Dashboard updated.");
@@ -348,7 +362,7 @@ async function init(){
   try{
     const data=await api("/districts");state.districts=data.districts;
     if(!district(state.districtId))state.districtId="chennai";
-    populateDistrictSelects();initMap();renderDistricts();await loadOverview();
+    populateDistrictSelects();initMap();renderDistricts();await loadOverview();loadStatewideMap();
   }catch(e){toast(`Cannot connect to Mazhai AI API: ${e.message}`);$("#sidebar-status").textContent="API unavailable"}
   try{await api("/health")}catch{$("#sidebar-status").textContent="API unavailable"}
 }

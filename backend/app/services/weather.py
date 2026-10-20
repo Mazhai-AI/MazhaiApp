@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from datetime import datetime, timezone, date, timedelta
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -11,16 +12,28 @@ FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 TIMEOUT = float(os.getenv("UPSTREAM_TIMEOUT_SECONDS", "12"))
 CACHE_TTL_SECONDS = int(os.getenv("WEATHER_CACHE_TTL_SECONDS", "900"))
+# Historical days that are safely in the past rarely change, so they can be cached much longer.
+HISTORY_PAST_CACHE_TTL_SECONDS = int(os.getenv("HISTORY_PAST_CACHE_TTL_SECONDS", "86400"))
+# Reanalysis for the most recent days can still be revised; only ranges ending before this margin get the long TTL.
+HISTORY_SETTLED_AFTER_DAYS = 7
+# Transient upstream failures (HTTP 429/5xx, timeouts, connection errors) are retried this many extra times.
+UPSTREAM_RETRIES = max(0, int(os.getenv("UPSTREAM_RETRIES", "1")))
+RETRY_BACKOFF_SECONDS = float(os.getenv("UPSTREAM_RETRY_BACKOFF_SECONDS", "0.5"))
+RETRYABLE_HTTP_STATUS = {429, 500, 502, 503, 504}
+IST = timezone(timedelta(hours=5, minutes=30))  # India has no DST, so a fixed offset is exact.
+STATEWIDE_CACHE_KEY = "statewide:forecast"
 
 class ProviderError(RuntimeError):
-    pass
+    def __init__(self, message, retryable=False):
+        super().__init__(message)
+        self.retryable = retryable
 
-def _get_json(url, params):
+def _get_json_once(url, params, expect_list=False):
     request = Request(url + "?" + urlencode(params), headers={"User-Agent":"MazhaiAI/1.0 (Tamil Nadu rainfall intelligence)"})
     try:
         with urlopen(request, timeout=TIMEOUT) as response:
             if response.status != 200:
-                raise ProviderError(f"Weather provider returned HTTP {response.status}")
+                raise ProviderError(f"Weather provider returned HTTP {response.status}", retryable=response.status in RETRYABLE_HTTP_STATUS)
             data = json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
         reason = ""
@@ -28,14 +41,32 @@ def _get_json(url, params):
             reason = json.loads(exc.read().decode("utf-8")).get("reason", "")
         except Exception:
             pass
-        raise ProviderError(f"Weather provider rejected the request (HTTP {exc.code}){': ' + reason if reason else ''}") from exc
-    except (URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise ProviderError(f"Weather provider rejected the request (HTTP {exc.code}){': ' + reason if reason else ''}", retryable=exc.code in RETRYABLE_HTTP_STATUS) from exc
+    except (URLError, TimeoutError) as exc:
+        raise ProviderError(f"Weather provider unavailable: {exc.__class__.__name__}", retryable=True) from exc
+    except json.JSONDecodeError as exc:
         raise ProviderError(f"Weather provider unavailable: {exc.__class__.__name__}") from exc
-    if not isinstance(data, dict) or data.get("error"):
+    # A single location answers with an object; several locations answer with a list of objects.
+    if expect_list:
+        if not isinstance(data, list) or any(not isinstance(item, dict) or item.get("error") for item in data):
+            raise ProviderError("Weather provider returned an invalid response")
+    elif not isinstance(data, dict) or data.get("error"):
         raise ProviderError("Weather provider returned an invalid response")
     return data
 
-def _cached(key):
+def _get_json(url, params, expect_list=False):
+    """Fetch JSON, retrying transient upstream failures with a short linear backoff."""
+    attempts = UPSTREAM_RETRIES + 1
+    for attempt in range(attempts):
+        try:
+            return _get_json_once(url, params, expect_list=expect_list)
+        except ProviderError as exc:
+            if attempt + 1 >= attempts or not exc.retryable:
+                raise
+            time.sleep(RETRY_BACKOFF_SECONDS * (attempt + 1))
+
+def _cached(key, ttl=None):
+    ttl = CACHE_TTL_SECONDS if ttl is None else ttl
     with connect() as conn:
         row = conn.execute("SELECT payload, fetched_at FROM api_cache WHERE cache_key=?", (key,)).fetchone()
     if not row:
@@ -43,7 +74,7 @@ def _cached(key):
     try:
         fetched = datetime.fromisoformat(row["fetched_at"])
         age = (datetime.now(timezone.utc) - fetched).total_seconds()
-        return {"payload": json.loads(row["payload"]), "fetched_at": row["fetched_at"], "stale": age > CACHE_TTL_SECONDS}
+        return {"payload": json.loads(row["payload"]), "fetched_at": row["fetched_at"], "stale": age > ttl}
     except (ValueError, json.JSONDecodeError):
         return None
 
@@ -140,7 +171,8 @@ def get_history(district_id, start, end, force=False):
     if (end_d - start_d).days > 3660:
         raise ValueError("Date range cannot exceed 10 years")
     key = f"history:{district_id}:{start}:{end}"
-    cached = _cached(key)
+    settled = end_d <= datetime.now(IST).date() - timedelta(days=HISTORY_SETTLED_AFTER_DAYS)
+    cached = _cached(key, ttl=HISTORY_PAST_CACHE_TTL_SECONDS if settled else None)
     if cached and not force and not cached["stale"]:
         return {**cached["payload"], "cached": True, "stale": False, "retrieved_at": cached["fetched_at"]}
     params = {"latitude":district["lat"], "longitude":district["lon"], "start_date":start, "end_date":end, "daily":"precipitation_sum", "timezone":"Asia/Kolkata"}
@@ -157,6 +189,51 @@ def get_history(district_id, start, end, force=False):
     except ProviderError:
         if cached:
             return {**cached["payload"], "cached":True, "stale":True, "retrieved_at":cached["fetched_at"], "warning":"Provider unavailable; showing cached data."}
+        raise
+
+def get_statewide_forecast(force=False):
+    """7-day precipitation totals for every district from ONE multi-location upstream request.
+
+    Open-Meteo accepts comma-separated coordinates and answers with a list in the same order,
+    so the map can colour all 38 districts without 38 separate calls.
+    """
+    cached = _cached(STATEWIDE_CACHE_KEY)
+    if cached and not force and not cached["stale"]:
+        return {**cached["payload"], "cached": True, "stale": False, "retrieved_at": cached["fetched_at"]}
+    params = {
+        "latitude": ",".join(str(d["lat"]) for d in DISTRICTS),
+        "longitude": ",".join(str(d["lon"]) for d in DISTRICTS),
+        "daily": "precipitation_sum", "forecast_days": 7, "timezone": "Asia/Kolkata",
+    }
+    try:
+        raw = _get_json(FORECAST_URL, params, expect_list=True)
+        if len(raw) != len(DISTRICTS):
+            # Without a one-to-one match we cannot safely attribute values to districts.
+            raise ProviderError("Weather provider returned an unexpected number of locations")
+        rows = []
+        for district, item in zip(DISTRICTS, raw):
+            daily = item.get("daily") if isinstance(item.get("daily"), dict) else {}
+            sums = daily.get("precipitation_sum")
+            values = [v for v in (sums if isinstance(sums, list) else []) if isinstance(v, (int, float)) and not isinstance(v, bool)]
+            rows.append({
+                "district_id": district["id"], "district": district["name"],
+                "lat": district["lat"], "lon": district["lon"],
+                # Missing values are unknown, never zero: no valid day means no total.
+                "total_mm": round(sum(values), 1) if values else None,
+                "max_daily_mm": round(max(values), 1) if values else None,
+                "valid_days": len(values),
+            })
+        payload = {
+            "source": "Open-Meteo Forecast API", "source_url": "https://open-meteo.com/en/docs",
+            "districts": rows,
+            "note": "7-day model forecast totals at representative district coordinates; not official district-wide forecasts or IMD warnings.",
+            "fetched_live": True,
+        }
+        fetched_at = _save_cache(STATEWIDE_CACHE_KEY, payload)
+        return {**payload, "cached": False, "stale": False, "retrieved_at": fetched_at}
+    except ProviderError:
+        if cached:
+            return {**cached["payload"], "cached": True, "stale": True, "retrieved_at": cached["fetched_at"], "warning": "Provider unavailable; showing cached data."}
         raise
 
 def get_source_status():
