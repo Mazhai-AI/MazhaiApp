@@ -3,6 +3,7 @@ const DEFAULT_LANGUAGE = "en";
 
 const TA = {
   "Mazhai AI — Tamil Nadu Rainfall Intelligence": "மழை AI — தமிழ்நாடு மழைப்பொழிவு நுண்ணறிவு",
+  "Skip to content": "உள்ளடக்கத்திற்குச் செல்",
   "WORKSPACE": "பணியிடம்", "SYSTEM": "அமைப்பு", "RAINFALL INTELLIGENCE": "மழைப்பொழிவு நுண்ணறிவு",
   "Overview": "கண்ணோட்டம்", "Live weather": "நேரடி வானிலை", "Rainfall history": "மழைப்பொழிவு வரலாறு",
   "District explorer": "மாவட்ட ஆய்வு", "Forecast & risk": "முன்னறிவிப்பு & அபாயம்",

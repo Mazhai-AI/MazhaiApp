@@ -531,5 +531,250 @@ class AiTests(unittest.TestCase):
         self.assertEqual(ai._resolve_district("Rain outlook for Chennai?", "coimbatore")["id"], "chennai")
 
 
+def put_cache(key, payload, age_seconds):
+    """Insert an api_cache row that looks like it was fetched age_seconds ago."""
+    from datetime import datetime, timedelta, timezone
+    fetched = (datetime.now(timezone.utc) - timedelta(seconds=age_seconds)).isoformat()
+    with db.connect() as c:
+        c.execute(
+            "INSERT INTO api_cache(cache_key,payload,fetched_at) VALUES(?,?,?) "
+            "ON CONFLICT(cache_key) DO UPDATE SET payload=excluded.payload,fetched_at=excluded.fetched_at",
+            (key, json.dumps(payload), fetched),
+        )
+
+
+def statewide_ok(req, timeout=None):
+    """Fake Open-Meteo multi-location answer: a list with one object per requested coordinate."""
+    from urllib.parse import parse_qs, urlparse
+    count = len(parse_qs(urlparse(req.full_url).query)["latitude"][0].split(","))
+    items = [{"daily": {"precipitation_sum": [1.0] * 7}} for _ in range(count)]
+    items[0] = {"daily": {"precipitation_sum": [None] * 7}}            # nothing valid -> unknown, not zero
+    items[1] = {"daily": {"precipitation_sum": [2.0, None, 3.0, 0.0, 0.0, 0.0, 0.0]}}
+    return FakeResp(items)
+
+
+class AiParsingFixTests(unittest.TestCase):
+    def test_trailing_commas_in_model_json_are_repaired(self):
+        self.assertEqual(ai._parse_json_object('{"a": 1, "b": [1,2,],}'), {"a": 1, "b": [1, 2]})
+
+    def test_salvaged_array_decodes_escaped_quotes(self):
+        items = ai._salvage_json_array('["He said \\"hi\\" today", "second item", "third')
+        self.assertEqual(items, ['He said "hi" today', "second item", "third"])
+
+    def test_combined_retry_instructions_are_separated_by_real_newlines(self):
+        os.environ["MISTRAL_API_KEY"] = "test-key"
+        self.addCleanup(os.environ.pop, "MISTRAL_API_KEY", None)
+        truncated = '{"current_conditions_and_forecast":"Cut off","what_to_watch_next":["Partial'
+        requests = []
+
+        def always_truncated(req, timeout=None):
+            requests.append(json.loads(req.data.decode()))
+            return FakeResp({"choices": [{"message": {"content": truncated}}]})
+
+        ai.urlopen = always_truncated
+        ai.ask_mistral("What next?", language="ta")  # English fallback text + truncation -> both retry parts
+        last = requests[1]["messages"][-1]["content"]
+        self.assertIn("FORMAT CHECK FAILED", last)
+        self.assertIn("LANGUAGE CHECK FAILED", last)
+        self.assertIn("\n\n", last)
+        self.assertNotIn("\\n", last)
+
+
+class ReliabilityTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        db.init_db()
+        cls.client = TestClient(main.app)
+
+    def setUp(self):
+        self._saved = (weather.urlopen, weather.RETRY_BACKOFF_SECONDS, weather.UPSTREAM_RETRIES)
+        weather.RETRY_BACKOFF_SECONDS = 0
+        weather.UPSTREAM_RETRIES = 1
+        with db.connect() as c:
+            c.execute("DELETE FROM api_cache WHERE cache_key=?", (weather.STATEWIDE_CACHE_KEY,))
+
+    def tearDown(self):
+        weather.urlopen, weather.RETRY_BACKOFF_SECONDS, weather.UPSTREAM_RETRIES = self._saved
+
+    # --- upstream retries -------------------------------------------------
+    def test_transient_http_error_is_retried_once(self):
+        calls = []
+
+        def flaky(req, timeout=None):
+            calls.append(1)
+            if len(calls) == 1:
+                raise HTTPError(req.full_url, 503, "busy", {}, io.BytesIO(b'{"reason":"busy"}'))
+            return archive_ok(req)
+
+        weather.urlopen = flaky
+        self.assertIn("daily", weather._get_json(weather.ARCHIVE_URL, {}))
+        self.assertEqual(len(calls), 2)
+
+    def test_client_errors_are_not_retried(self):
+        calls = []
+
+        def bad_request(req, timeout=None):
+            calls.append(1)
+            raise HTTPError(req.full_url, 400, "bad", {}, io.BytesIO(b'{"reason":"Invalid date"}'))
+
+        weather.urlopen = bad_request
+        with self.assertRaises(weather.ProviderError) as ctx:
+            weather._get_json(weather.ARCHIVE_URL, {})
+        self.assertEqual(len(calls), 1)
+        self.assertFalse(ctx.exception.retryable)
+        self.assertIn("Invalid date", str(ctx.exception))
+
+    def test_retries_are_bounded(self):
+        from urllib.error import URLError
+        calls = []
+
+        def down(req, timeout=None):
+            calls.append(1)
+            raise URLError("offline")
+
+        weather.urlopen = down
+        with self.assertRaises(weather.ProviderError):
+            weather._get_json(weather.ARCHIVE_URL, {})
+        self.assertEqual(len(calls), weather.UPSTREAM_RETRIES + 1)
+
+    # --- history cache TTL --------------------------------------------------
+    def _history_key(self, days_ago_end):
+        from datetime import datetime, timedelta
+        end = datetime.now(weather.IST).date() - timedelta(days=days_ago_end)
+        start = end - timedelta(days=2)
+        return start.isoformat(), end.isoformat(), f"history:chennai:{start.isoformat()}:{end.isoformat()}"
+
+    def _cached_history_payload(self):
+        return {"district": {"id": "chennai", "name": "Chennai"}, "source": "cached-test",
+                "records": [{"date": "2000-01-01", "precipitation_mm": 4.2}]}
+
+    def test_settled_history_range_uses_long_cache_ttl(self):
+        start, end, key = self._history_key(30)
+        put_cache(key, self._cached_history_payload(), age_seconds=7200)  # older than 15 min, younger than 24 h
+
+        def must_not_fetch(req, timeout=None):
+            raise AssertionError("a settled past range should be served from cache")
+
+        weather.urlopen = must_not_fetch
+        result = weather.get_history("chennai", start, end)
+        self.assertTrue(result["cached"])
+        self.assertFalse(result["stale"])
+
+    def test_recent_history_range_still_uses_short_cache_ttl(self):
+        start, end, key = self._history_key(1)
+        put_cache(key, self._cached_history_payload(), age_seconds=7200)
+        calls = []
+
+        def fresh(req, timeout=None):
+            calls.append(1)
+            return archive_ok(req)
+
+        weather.urlopen = fresh
+        result = weather.get_history("chennai", start, end)
+        self.assertEqual(len(calls), 1)
+        self.assertFalse(result["cached"])
+
+    # --- statewide forecast --------------------------------------------------
+    def test_statewide_forecast_uses_one_upstream_call_and_keeps_unknown_unknown(self):
+        calls = []
+
+        def counting(req, timeout=None):
+            calls.append(1)
+            return statewide_ok(req)
+
+        weather.urlopen = counting
+        data = self.client.get("/api/weather/statewide").json()
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(data["districts"]), 38)
+        first, second, third = data["districts"][:3]
+        self.assertEqual(first["district_id"], main.DISTRICTS[0]["id"])
+        self.assertIsNone(first["total_mm"])           # all values missing -> not 0
+        self.assertEqual(first["valid_days"], 0)
+        self.assertEqual(second["total_mm"], 5.0)
+        self.assertEqual(second["max_daily_mm"], 3.0)
+        self.assertEqual(second["valid_days"], 6)  # 7 values, one missing
+        self.assertEqual(third["total_mm"], 7.0)
+        # A second request within the TTL comes from the cache.
+        again = self.client.get("/api/weather/statewide").json()
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(again["cached"])
+
+    def test_statewide_forecast_rejects_mismatched_location_count(self):
+        weather.urlopen = lambda req, timeout=None: FakeResp([{"daily": {"precipitation_sum": [1] * 7}}] * 3)
+        response = self.client.get("/api/weather/statewide")
+        self.assertEqual(response.status_code, 503)
+
+    def test_statewide_forecast_falls_back_to_stale_cache_when_provider_is_down(self):
+        weather.urlopen = statewide_ok
+        self.assertEqual(self.client.get("/api/weather/statewide").status_code, 200)
+        from urllib.error import URLError
+
+        def down(req, timeout=None):
+            raise URLError("offline")
+
+        weather.urlopen = down
+        data = self.client.get("/api/weather/statewide?refresh=true").json()
+        self.assertTrue(data["stale"])
+        self.assertIn("warning", data)
+
+    # --- database -------------------------------------------------------------
+    def test_wal_mode_is_enabled(self):
+        db.init_db()
+        with db.connect() as c:
+            self.assertEqual(c.execute("PRAGMA journal_mode").fetchone()[0].lower(), "wal")
+
+    def test_prune_cache_removes_only_old_rows(self):
+        put_cache("prune-test:old", {"x": 1}, age_seconds=40 * 86400)
+        put_cache("prune-test:new", {"x": 2}, age_seconds=86400)
+        self.assertGreaterEqual(db.prune_cache(30), 1)
+        with db.connect() as c:
+            keys = {r[0] for r in c.execute("SELECT cache_key FROM api_cache WHERE cache_key LIKE 'prune-test:%'")}
+        self.assertEqual(keys, {"prune-test:new"})
+
+    # --- HTTP layer -------------------------------------------------------------
+    def test_security_headers_are_set(self):
+        headers = self.client.get("/api/health").headers
+        self.assertEqual(headers["x-content-type-options"], "nosniff")
+        self.assertEqual(headers["x-frame-options"], "SAMEORIGIN")
+        self.assertIn("referrer-policy", headers)
+        self.assertIn("permissions-policy", headers)
+
+    def test_large_responses_are_gzipped(self):
+        response = self.client.get("/api/districts", headers={"Accept-Encoding": "gzip"})
+        self.assertEqual(response.headers.get("content-encoding"), "gzip")
+        self.assertEqual(response.json()["count"], 38)
+
+    def test_ai_rate_limit_blocks_then_isolates_clients(self):
+        from fastapi import HTTPException
+        saved = main.AI_RATE_LIMIT
+        main.AI_RATE_LIMIT = 2
+        main._ai_hits.clear()
+        try:
+            main._check_ai_rate("a")
+            main._check_ai_rate("a")
+            with self.assertRaises(HTTPException) as ctx:
+                main._check_ai_rate("a")
+            self.assertEqual(ctx.exception.status_code, 429)
+            main._check_ai_rate("b")  # another client is unaffected
+        finally:
+            main.AI_RATE_LIMIT = saved
+            main._ai_hits.clear()
+
+    def test_ai_rate_limiter_sweeps_idle_clients(self):
+        import time
+        from collections import deque
+        saved_limit, saved_threshold = main.AI_RATE_LIMIT, main._AI_SWEEP_THRESHOLD
+        main.AI_RATE_LIMIT, main._AI_SWEEP_THRESHOLD = 5, 10
+        main._ai_hits.clear()
+        try:
+            for i in range(20):
+                main._ai_hits[f"idle-{i}"] = deque([time.monotonic() - 120])
+            main._check_ai_rate("active")
+            self.assertEqual(list(main._ai_hits), ["active"])
+        finally:
+            main.AI_RATE_LIMIT, main._AI_SWEEP_THRESHOLD = saved_limit, saved_threshold
+            main._ai_hits.clear()
+
+
 if __name__ == "__main__":
     unittest.main()

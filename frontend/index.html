@@ -13,12 +13,13 @@
   <link rel="stylesheet" href="/css/weather-explorer.css">
 </head>
 <body>
+<a class="skip-link" href="#main-content">Skip to content</a>
 <div class="app-shell">
   <aside class="sidebar" id="sidebar">
     <a class="brand" href="#" aria-label="Mazhai AI home"><span class="brand-mark">ம</span><span><b>Mazhai<span class="brand-ai"> AI</span></b><small>RAINFALL INTELLIGENCE</small></span></a>
     <div class="sidebar-label">WORKSPACE</div>
     <nav class="nav-list" aria-label="Main navigation">
-      <button class="nav-item active" data-view="overview"><span>◫</span> Overview</button>
+      <button class="nav-item active" data-view="overview" aria-current="page"><span>◫</span> Overview</button>
       <button class="nav-item" data-view="live"><span>◉</span> Live weather</button>
       <button class="nav-item" data-view="history"><span>▥</span> Rainfall history</button>
       <button class="nav-item" data-view="districts"><span>⌖</span> District explorer</button>
@@ -33,7 +34,7 @@
     </nav>
     <div class="sidebar-bottom"><div class="system-status"><span class="status-dot"></span><span><b>Data services</b><small id="sidebar-status">Checking connection…</small></span></div><div class="sidebar-foot">Built for Tamil Nadu <span>·</span> v1.0</div></div>
   </aside>
-  <main class="main-area">
+  <main class="main-area" id="main-content" tabindex="-1">
     <header class="topbar">
       <button class="mobile-menu" id="mobile-menu" aria-label="Toggle navigation">☰</button>
       <div class="breadcrumb"><span>Workspace</span><span class="crumb-sep">/</span><b id="page-title">Overview</b></div>

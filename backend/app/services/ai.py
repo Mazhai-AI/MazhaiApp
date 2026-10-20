@@ -344,7 +344,7 @@ def _parse_json_object(raw):
         if repaired != candidate:
             attempts.append(repaired)
         for attempt in list(attempts):
-            trailing_comma_fixed = re.sub(r",\\s*([}\\]])", r"\\1", attempt)
+            trailing_comma_fixed = re.sub(r",\s*([}\]])", r"\1", attempt)
             if trailing_comma_fixed not in attempts:
                 attempts.append(trailing_comma_fixed)
         for attempt in attempts:
@@ -451,11 +451,12 @@ def _salvage_json_array(value):
         while index < len(value):
             char = value[index]
             if escaped:
-                chars.append("\\\\" + char)
+                # Keep the escape sequence intact so _decode_salvaged_json_string can decode it.
+                chars.append("\\" + char)
                 escaped = False
                 index += 1
                 continue
-            if char == "\\\\":
+            if char == "\\":
                 escaped = True
                 index += 1
                 continue
@@ -874,7 +875,7 @@ def ask_mistral(question, district_id=None, start=None, end=None, history=None, 
                 retry_parts.append(_language_retry_instruction(language))
             retry_messages = messages + [
                 {"role": "assistant", "content": raw_answer[:5000]},
-                {"role": "user", "content": "\\n\\n".join(retry_parts)},
+                {"role": "user", "content": "\n\n".join(retry_parts)},
             ]
             try:
                 retry_answer = call_model(retry_messages)
