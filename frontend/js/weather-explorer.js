@@ -71,6 +71,19 @@ function explorerMarkup() {
     </div>`;
 }
 
+/* Bring the map on screen after a selection: on narrow layouts the map sits above the
+   details panel, so picking something from the panel could otherwise leave it out of view. */
+function revealMap() {
+  const el = byId("wx-map");
+  if (!el) return;
+  explorerState.map?.invalidateSize();
+  const rect = el.getBoundingClientRect();
+  const viewport = window.innerHeight || document.documentElement.clientHeight;
+  if (rect.top >= 0 && rect.bottom <= viewport) return;
+  const calm = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  el.scrollIntoView?.({ behavior: calm ? "auto" : "smooth", block: "center" });
+}
+
 function updateBreadcrumb(text) {
   const el = byId("wx-breadcrumb");
   if (el) el.textContent = text;
@@ -454,7 +467,7 @@ function drawPlaceMarkers() {
     const rain = placeRain(place);
     marker.bindTooltip(
       `${safe(place.name)}${rain === null ? "" : `<br>7-day rain: ${number(rain)} mm`}`,
-      { direction: "top", offset: [0, -5] },
+      { direction: "top", offset: [0, -5], permanent: selected },
     );
     marker.on("click", () => selectPlace(place));
     marker.bringToFront();
@@ -550,6 +563,7 @@ async function selectPlace(place) {
   explorerState.avatarMessageVisible = false;
   drawPlaceMarkers();
   explorerState.map.flyTo([place.lat, place.lon], 11, { duration: 0.6 });
+  revealMap();
   updateBreadcrumb(`India → Tamil Nadu → ${district.name} → ${place.name}`);
   updateBackButton(true);
   const content = byId("wx-detail-content");
@@ -608,6 +622,7 @@ function backToDistrict() {
   if (district.id === "chennai") explorerState.map.flyTo([13.0827, 80.2707], 11, { duration: 0.6 });
   else if (explorerState.places.length) fitDistrictToPlaces(district);
   else explorerState.map.flyTo([district.lat, district.lon], 8, { duration: 0.6 });
+  revealMap();
   renderDistrictDetail(district, explorerState.forecast);
 }
 
@@ -626,6 +641,7 @@ async function selectDistrict(district) {
   }
   addDistrictMarkers();
   explorerState.map.flyTo([district.lat, district.lon], district.id === "chennai" ? 10 : 8, { duration: 0.7 });
+  revealMap();
   updateBreadcrumb(`India → Tamil Nadu → ${district.name}`);
   updateBackButton(true);
   const content = byId("wx-detail-content");
@@ -815,6 +831,12 @@ async function bootWeatherExplorer() {
       const place = explorerState.places.find((p) => p.id === placeButton.dataset.wxPlace);
       if (place) selectPlace(place);
     }
+  });
+
+  // The dropdown at the top of the overview page selects a district too: show it on this map.
+  byId("district-select")?.addEventListener("change", (event) => {
+    const item = explorerState.districts.find((d) => d.id === event.target.value);
+    if (item && item.id !== explorerState.selectedDistrict?.id) selectDistrict(item);
   });
 
   byId("wx-back")?.addEventListener("click", () => {
