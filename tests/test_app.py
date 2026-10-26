@@ -975,5 +975,109 @@ class PlacesTests(unittest.TestCase):
         self.assertIn("warning", data)
 
 
+class BugfixRegressionTests(unittest.TestCase):
+    """Regression tests for bugs found in the 2026-10-26 review."""
+
+    @classmethod
+    def setUpClass(cls):
+        db.init_db()
+        cls.client = TestClient(main.app)
+
+    def setUp(self):
+        self._saved = (weather.urlopen, weather.RETRY_BACKOFF_SECONDS, weather.UPSTREAM_RETRIES, ai.urlopen)
+        weather.RETRY_BACKOFF_SECONDS = 0
+        weather.UPSTREAM_RETRIES = 1
+        os.environ["MISTRAL_API_KEY"] = "test-key"
+
+    def tearDown(self):
+        weather.urlopen, weather.RETRY_BACKOFF_SECONDS, weather.UPSTREAM_RETRIES, ai.urlopen = self._saved
+        os.environ.pop("MISTRAL_API_KEY", None)
+
+    def test_daily_peak_of_10_to_25_mm_is_explained_not_reported_below_watch(self):
+        # A 12 mm day outside the 48-hour window raises the level to Watch; the rationale used to
+        # claim the amounts were "below the app's Watch threshold".
+        alert = ai._build_rainfall_alert({
+            "stale": False,
+            "next_48_hours": {"precipitation_mm": 2.0, "peak_precipitation_probability_pct": 20},
+            "maximum_daily_forecast": {"date": "2026-10-30", "precipitation_mm": 12.0},
+            "valid_daily_precipitation_values": 7,
+            "forecast_days_returned": 7,
+        })
+        self.assertEqual(alert["level"], "Watch")
+        self.assertIn("12.0 mm on 2026-10-30", alert["rationale"])
+        self.assertNotIn("below the app's Watch threshold", alert["rationale"])
+
+    def test_non_canonical_iso_dates_are_normalised_before_the_upstream_call(self):
+        # date.fromisoformat accepts "20260801"; Open-Meteo does not.
+        urls = []
+
+        def fake(req, timeout=None):
+            urls.append(req.full_url)
+            return FakeResp({"daily": {"time": ["2026-08-01"], "precipitation_sum": [1.0]}})
+
+        weather.urlopen = fake
+        response = self.client.get("/api/rainfall/history?district_id=chennai&start=20260801&end=20260805&refresh=true")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("start_date=2026-08-01", urls[0])
+        self.assertIn("end_date=2026-08-05", urls[0])
+
+    def test_socket_level_read_errors_are_503_not_500(self):
+        import http.client
+
+        for exc in (ConnectionResetError("reset"), http.client.IncompleteRead(b"par")):
+            def broken(req, timeout=None, _exc=exc):
+                raise _exc
+
+            weather.urlopen = broken
+            response = self.client.get("/api/rainfall/history?district_id=chennai&start=2026-07-01&end=2026-07-03&refresh=true")
+            self.assertEqual(response.status_code, 503, repr(exc))
+
+    def test_connection_reset_falls_back_to_the_stale_cache(self):
+        weather.urlopen = lambda req, timeout=None: FakeResp({"daily": {"time": ["2026-06-01"], "precipitation_sum": [2.0]}})
+        query = "/api/rainfall/history?district_id=madurai&start=2026-06-01&end=2026-06-01&refresh=true"
+        self.assertEqual(self.client.get(query).status_code, 200)
+
+        def reset(req, timeout=None):
+            raise ConnectionResetError("reset")
+
+        weather.urlopen = reset
+        data = self.client.get(query).json()
+        self.assertTrue(data["stale"])
+        self.assertIn("warning", data)
+
+    def test_network_failure_on_the_mistral_retry_keeps_the_recovered_answer(self):
+        truncated = (
+            '{"current_conditions_and_forecast":"Rain is possible tomorrow.",'
+            '"historical_context":"Recent rainfall was near normal.",'
+            '"what_to_watch_next":["Partial watch item'
+        )
+        calls = []
+
+        def flaky(req, timeout=None):
+            calls.append(1)
+            if len(calls) == 1:
+                return FakeResp({"choices": [{"message": {"content": truncated}}]})
+            raise ConnectionResetError("reset")
+
+        ai.urlopen = flaky
+        result = ai.ask_mistral("What should I watch next?", language="en")
+        self.assertTrue(result["available"])
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(result["structured_answer"]["current_conditions_and_forecast"], "Rain is possible tomorrow.")
+
+    def test_connection_reset_on_the_first_mistral_call_is_reported_not_raised(self):
+        def reset(req, timeout=None):
+            raise ConnectionResetError("reset")
+
+        ai.urlopen = reset
+        result = ai.ask_mistral("Anything new today?", language="en")  # no district named: no weather calls
+        self.assertFalse(result["available"])
+        self.assertIn("Could not reach Mistral", result["message"])
+
+    def test_ai_question_length_is_checked_after_trimming(self):
+        response = self.client.post("/api/ai/ask", json={"question": "   a   "})
+        self.assertEqual(response.status_code, 422)
+
+
 if __name__ == "__main__":
     unittest.main()

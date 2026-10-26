@@ -30,6 +30,7 @@ const explorerState = {
   placeForecast: null,
   placeRequestId: 0,
   cityViewOpen: false, // Chennai ward view hides the place markers
+  boundaryRequestId: 0, // invalidates an in-flight ward GeoJSON load once the user leaves Chennai
 };
 
 const byId = (id) => document.getElementById(id);
@@ -620,6 +621,7 @@ async function selectDistrict(district) {
   explorerState.forecast = null;
   resetPlaces();
   // A previous district's ward polygons (Chennai) must not linger under another district.
+  explorerState.boundaryRequestId += 1; // ...nor may a ward file that is still downloading
   if (explorerState.localLayer) {
     explorerState.map.removeLayer(explorerState.localLayer);
     explorerState.localLayer = null;
@@ -714,11 +716,16 @@ function openChennaiView(district) {
 async function loadChennaiBoundaries() {
   const status = byId("wx-boundary-status");
   if (explorerState.selectedDistrict?.id !== "chennai") return;
+  const token = ++explorerState.boundaryRequestId;
+  const stillWanted = () => token === explorerState.boundaryRequestId && explorerState.selectedDistrict?.id === "chennai";
   const url = "/data/geo/chennai-wards.geojson";
   const sourceUrl = "https://github.com/datameet/Municipal_Spatial_Data/blob/master/Chennai/Wards.geojson";
   const licenseUrl = "https://creativecommons.org/licenses/by-sa/2.5/in/";
   try {
     const geojson = await getJSON(url);
+    // The user may have picked another district (or gone Back) while the ~500 KB file was loading;
+    // adding the layer now would draw Chennai's wards over it and pull the map back to Chennai.
+    if (!stillWanted()) return;
     if (!geojson || geojson.type !== "FeatureCollection" || !Array.isArray(geojson.features)) {
       throw new Error("GeoJSON must be a FeatureCollection");
     }
@@ -751,6 +758,7 @@ async function loadChennaiBoundaries() {
       status.innerHTML = `<strong>200 Chennai ward boundaries loaded.</strong> Hover over a polygon to see its ward number and zone, or select it for details. Historical community-curated boundary data; verify against the latest GCC Gazette for authoritative use. <a href="${sourceUrl}" target="_blank" rel="noreferrer">Source: DataMeet / Transparent Chennai</a> · <a href="${licenseUrl}" target="_blank" rel="noreferrer">CC BY-SA 2.5 India</a>.`;
     }
   } catch (error) {
+    if (!stillWanted()) return;
     if (status) status.textContent = `Chennai ward boundaries could not be loaded: ${error.message}. Check the deployed GeoJSON asset and its 200 ward features.`;
   }
 }
@@ -822,10 +830,13 @@ async function bootWeatherExplorer() {
       backToDistrict();
       return;
     }
-    if (explorerState.selectedArea || explorerState.selectedDistrict?.id === "chennai") {
+    // Only step "up" inside Chennai when a ward or the city view is actually open. Testing just
+    // `id === "chennai"` made Back re-render the Chennai panel forever, so the state map was unreachable.
+    if (explorerState.selectedArea || explorerState.cityViewOpen) {
       if (explorerState.selectedDistrict?.id === "chennai") {
         explorerState.selectedArea = null;
         explorerState.cityViewOpen = false;
+        explorerState.boundaryRequestId += 1;
         if (explorerState.localLayer) explorerState.map.removeLayer(explorerState.localLayer);
         explorerState.localLayer = null;
         drawPlaceMarkers();
@@ -842,6 +853,11 @@ async function bootWeatherExplorer() {
       explorerState.forecast = null;
       explorerState.selectedArea = null;
       resetPlaces(); // the previous district's town markers must not stay on the state map
+      explorerState.boundaryRequestId += 1; // Chennai's ward polygons (auto-loaded with the district) must not stay either
+      if (explorerState.localLayer) {
+        explorerState.map.removeLayer(explorerState.localLayer);
+        explorerState.localLayer = null;
+      }
       addDistrictMarkers();
       explorerState.map.setView([22.7, 79.0], 4.5);
       updateBreadcrumb("India · select a state or Tamil Nadu district");

@@ -45,8 +45,13 @@ function selectDistrict(id){
   $$(".district-select-sync").forEach(s=>s.value=id);
   $("#ai-context-district").textContent=district(id).name;
   loadOverview();
+  // The Live weather and Forecast views have their own district selectors; without this they kept showing the previous district.
+  if(state.lastView==="live")loadLive();
+  if(state.lastView==="forecast")loadForecastDetail();
 }
 function fmt(v,digits=1){return typeof v==="number"&&Number.isFinite(v)?v.toFixed(digits):"—";}
+// Sum of the days that have a value; null (unknown) when none do, never a misleading 0.
+function sumKnown(days){const v=(days||[]).map(d=>d.precipitation_mm).filter(x=>typeof x==="number"&&Number.isFinite(x));return v.length?v.reduce((s,x)=>s+x,0):null;}
 function showFreshness(data){return `${data?.stale?"Stale cached data":data?.cached?"Cached provider data":"Retrieved"}${data?.retrieved_at?` · ${new Date(data.retrieved_at).toLocaleString(locale())}`:""}`;}
 function chartOptions(){return {responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{backgroundColor:"#102438",titleColor:"#eaf3fb",bodyColor:"#b4c8d8",borderColor:"#29445a",borderWidth:1,displayColors:false}},scales:{x:{grid:{display:false},ticks:{color:"#748ba0",font:{size:9},maxTicksLimit:9},border:{display:false}},y:{beginAtZero:true,grid:{color:"#1b2d3f"},ticks:{color:"#748ba0",font:{size:9}},border:{display:false}}}};}
 function drawChart(canvasId, existingKey, labels, values, label="Precipitation (mm)"){
@@ -63,21 +68,23 @@ async function loadOverview(){
   $("#metric-temp-foot").textContent=`${d.name} · provider model`;
   try{
     const f=await api(`/weather/forecast?district_id=${encodeURIComponent(d.id)}`);
+    if(state.districtId!==d.id)return; // a newer selection superseded this request
     state.forecast=f;renderForecastMetrics(f);renderOutlook(f);renderSignal(f);renderMapForecast(f);
     $("#forecast-source-note").textContent=`${f.source} · ${showFreshness(f)}`;
     $("#sidebar-status").textContent=f.stale?"Showing cached data":"Provider reachable";
   }catch(e){
+    if(state.districtId!==d.id)return;
     ["metric-temp","metric-rain","metric-humidity","metric-seven-day"].forEach(id=>{$(`#${id}`).innerHTML="—";});
     $("#outlook-list").innerHTML=`<div class="empty-state compact">${escapeHTML(e.message)}<br>Retry when the provider is available.</div>`;
     $("#forecast-source-note").textContent="No verified forecast currently available";
     $("#sidebar-status").textContent="Weather data unavailable";
     renderSignal(null);
   }
-  try{const h=await api(`/rainfall/history?district_id=${d.id}&start=${daysAgo(29)}&end=${dateISO(today)}`);state.history=h;renderHistoryMini(h)}
-  catch(e){$("#history-chart-empty").textContent=`Historical data unavailable: ${e.message}`;setChartEmpty("history-chart-empty",true)}
+  try{const h=await api(`/rainfall/history?district_id=${d.id}&start=${daysAgo(29)}&end=${dateISO(today)}`);if(state.districtId!==d.id)return;state.history=h;renderHistoryMini(h)}
+  catch(e){if(state.districtId!==d.id)return;$("#history-chart-empty").textContent=`Historical data unavailable: ${e.message}`;setChartEmpty("history-chart-empty",true)}
 }
 function renderForecastMetrics(f){
-  const c=f.current||{}, total=(f.daily||[]).reduce((sum,x)=>sum+(typeof x.precipitation_mm==="number"?x.precipitation_mm:0),0);
+  const c=f.current||{}, total=sumKnown(f.daily);
   $("#metric-temp").innerHTML=`${fmt(c.temperature_c)}<small>°C</small>`;
   $("#metric-rain").innerHTML=`${fmt(c.precipitation_mm)}<small> mm</small>`;
   $("#metric-humidity").innerHTML=`${fmt(c.humidity_pct,0)}<small>%</small>`;
@@ -92,9 +99,9 @@ function renderOutlook(f){
 }
 function renderSignal(f){
   if(!f){$("#signal-content").innerHTML='<div class="signal-empty">No current forecast data is available. The app will not generate a synthetic signal.</div>';return}
-  const days=f.daily||[], wet=days.filter(d=>(d.precipitation_mm||0)>=1), total=days.reduce((s,d)=>s+(d.precipitation_mm||0),0), peak=days.reduce((a,b)=>(b.precipitation_mm||0)>(a.precipitation_mm||0)?b:a,days[0]||{});
+  const days=f.daily||[], wet=days.filter(d=>(d.precipitation_mm||0)>=1), total=sumKnown(days), peak=days.reduce((a,b)=>(b.precipitation_mm||0)>(a.precipitation_mm||0)?b:a,days[0]||{});
   const items=[
-    ["↗","7-day precipitation",`${fmt(total)} mm forecast total from ${f.source}. This is a model forecast, not a measured district total.`],
+    ["↗","7-day precipitation",total===null?"The provider returned no usable daily precipitation values, so no 7-day total is shown.":`${fmt(total)} mm forecast total from ${f.source}. This is a model forecast, not a measured district total.`],
     ["◷","Rainfall timing",wet.length?`${wet.length} of ${days.length} forecast days have at least 1 mm indicated. Highest daily amount: ${fmt(peak.precipitation_mm)} mm on ${peak.date}.`:"No forecast day reaches 1 mm in the returned daily data; this does not guarantee dry conditions."],
     ["i","What this means","This is a rainfall indicator only. Flooding depends on drainage, terrain, rivers, soil moisture, and local conditions."]
   ];
@@ -106,7 +113,9 @@ function renderHistoryMini(h){
   if(records.length)drawChart("history-chart","historyChart",records.map(r=>r.date.slice(5)),values);
 }
 function initMap(){
-  if(!window.L||state.map)return;
+  // weather-explorer.js replaces the map panel's contents; if it won the startup race #tn-map is gone, and
+  // L.map()/addEventListener would throw and abort the rest of init() (overview never loading).
+  if(!window.L||state.map||!$("#tn-map"))return;
   state.map=L.map("tn-map",{zoomControl:true,scrollWheelZoom:false}).setView([10.85,78.5],6);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'}).addTo(state.map);
   state.districts.forEach(d=>{
@@ -127,8 +136,7 @@ function styleMarker(id,name,total,selected){
 }
 function renderMapForecast(f){
   state.markers.forEach((m,id)=>{if(id!==f.district.id&&m.options.radius===8)m.setRadius(6)});
-  const total=(f.daily||[]).reduce((s,d)=>s+(d.precipitation_mm||0),0);
-  styleMarker(f.district.id,f.district.name,total,true);
+  styleMarker(f.district.id,f.district.name,sumKnown(f.daily),true);
 }
 // One backend request (one upstream call) colours every district marker instead of only the selected one.
 async function loadStatewideMap(force=false){
@@ -143,18 +151,20 @@ async function loadLive(){
   $("#live-content").innerHTML='<div class="panel empty-state">Loading provider conditions…</div>';
   try{
     const f=await api(`/weather/forecast?district_id=${d.id}`),c=f.current||{};
+    if(state.districtId!==d.id)return;
     const fields=[["Relative humidity",`${fmt(c.humidity_pct,0)}%`],["Current precipitation",`${fmt(c.precipitation_mm)} mm`],["Wind speed",`${fmt(c.wind_kmh)} km/h`],["Wind direction",`${fmt(c.wind_direction_deg,0)}°`],["Cloud cover",`${fmt(c.cloud_cover_pct,0)}%`],["Forecast model timezone",f.model_timezone||"—"]];
     $("#live-content").innerHTML=`<article class="panel weather-detail"><h2>${escapeHTML(d.name)} · current</h2><div class="weather-big">${fmt(c.temperature_c)}°</div><div class="weather-sub">Air temperature · Celsius</div><div style="margin-top:18px">${fields.slice(0,3).map(([k,v])=>`<div class="weather-kv"><span>${k}</span><b>${v}</b></div>`).join("")}</div></article><article class="panel weather-detail"><h2>Atmospheric conditions</h2><div class="weather-big">${fmt(c.humidity_pct,0)}<small style="font:400 14px var(--font);color:var(--muted)"> % RH</small></div><div class="weather-sub">Relative humidity</div><div style="margin-top:18px">${fields.slice(3).map(([k,v])=>`<div class="weather-kv"><span>${k}</span><b>${v}</b></div>`).join("")}</div></article><article class="panel weather-detail"><h2>Data provenance</h2><div class="weather-sub">Provider and retrieval metadata</div><div style="margin-top:18px"><div class="weather-kv"><span>Source</span><b>Open-Meteo</b></div><div class="weather-kv"><span>Retrieved at</span><b>${f.retrieved_at?new Date(f.retrieved_at).toLocaleTimeString(locale()):"—"}</b></div><div class="weather-kv"><span>Data status</span><b>${f.stale?"Stale cache":f.cached?"Cached":"Fresh response"}</b></div><div class="weather-kv"><span>Coordinate type</span><b>District reference point</b></div></div><a href="${f.source_url}" target="_blank" rel="noreferrer">Provider documentation ↗</a></article>`;
-  }catch(e){$("#live-content").innerHTML=`<div class="panel empty-state">${escapeHTML(e.message)}</div>`}
+  }catch(e){if(state.districtId!==d.id)return;$("#live-content").innerHTML=`<div class="panel empty-state">${escapeHTML(e.message)}</div>`}
 }
 async function loadForecastDetail(){
   const d=district(state.districtId);if(!d)return;
   $("#forecast-detail").innerHTML='<div class="empty-state">Loading forecast…</div>';
   try{
     const f=await api(`/weather/forecast?district_id=${d.id}`),c=f.current||{},days=f.daily||[];
-    const total=days.reduce((s,x)=>s+(x.precipitation_mm||0),0);
+    if(state.districtId!==d.id)return;
+    const total=sumKnown(days);
     $("#forecast-detail").innerHTML=`<div class="forecast-top"><div><h2>${escapeHTML(d.name)}</h2><p>Provider forecast · representative district coordinates</p><p style="margin-top:8px">${escapeHTML(f.source)} · ${f.stale?"cached/stale":f.cached?"cached":"retrieved"}</p></div><div style="text-align:right"><div class="forecast-now">${fmt(c.temperature_c)}°C</div><p class="muted" style="font-size:10px;margin:0">Current temperature</p><p style="font-size:10px;color:var(--cyan);margin:5px 0 0">${fmt(total)} mm / 7 days</p></div></div><div class="forecast-days">${days.map((day,i)=>`<div class="forecast-day"><small>${i===0?"Today":new Date(`${day.date}T12:00:00`).toLocaleDateString(locale(),{weekday:"short"})}</small><div class="rain-emoji">${(day.precipitation_mm||0)>=10?"🌧":(day.precipitation_mm||0)>=1?"🌦":"☁"}</div><b>${fmt(day.temp_max_c,0)}° / ${fmt(day.temp_min_c,0)}°</b><span>${fmt(day.precipitation_mm)} mm</span><small style="margin-top:5px">${day.precipitation_probability_pct==null?"—":`${fmt(day.precipitation_probability_pct,0)}% chance`}</small></div>`).join("")}</div><div class="forecast-meta"><span>Source: ${escapeHTML(f.source)}</span><span>Updated: ${f.retrieved_at?new Date(f.retrieved_at).toLocaleString(locale()):"—"}</span><span>7-day sum is a model output, not a warning</span></div>`;
-  }catch(e){$("#forecast-detail").innerHTML=`<div class="empty-state">${escapeHTML(e.message)}</div>`}
+  }catch(e){if(state.districtId!==d.id)return;$("#forecast-detail").innerHTML=`<div class="empty-state">${escapeHTML(e.message)}</div>`}
 }
 function renderDistricts(filter=""){
   const query=filter.trim().toLowerCase(),items=state.districts.filter(d=>d.name.toLowerCase().includes(query)||d.id.includes(query));
@@ -338,6 +348,8 @@ function wireEvents(){
   $("#district-grid").addEventListener("click",e=>{const card=e.target.closest("[data-district-card]");if(card){selectDistrict(card.dataset.districtCard);showView("overview")}});
   $("#reload-sources").addEventListener("click",loadSources);
   $("#chat-form").addEventListener("submit",e=>{e.preventDefault();sendQuestion()});
+  // Enter sends (Shift+Enter inserts a newline). isComposing keeps Tamil/IME candidate selection from sending early.
+  $("#chat-input").addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey&&!e.isComposing){e.preventDefault();sendQuestion()}});
   $$(".suggested-questions button").forEach(b=>b.addEventListener("click",()=>sendQuestion(b.dataset.question)));
   $("#mobile-menu").addEventListener("click",()=>$("#sidebar").classList.toggle("open"));
   $("#save-settings").addEventListener("click",()=>{setLanguage($("#language-select").value);applyLanguage(getLanguage());$("#language-select").value=getLanguage();$("#today-label").textContent=today.toLocaleDateString(locale(),{weekday:"short",day:"numeric",month:"short",year:"numeric"});selectDistrict($("#default-district").value);$("#settings-saved").textContent=t("Preferences saved in this browser.");toast(t("Preferences saved."));});

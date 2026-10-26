@@ -82,6 +82,12 @@ class AskRequest(BaseModel):
     end: str | None = None
     history: list[ChatTurn] = Field(default_factory=list, max_length=12)
 
+    @field_validator("question", mode="before")
+    @classmethod
+    def strip_question(cls, value):
+        # Validate the length of what will actually be sent: "   a " must not pass min_length=3.
+        return value.strip() if isinstance(value, str) else value
+
 # Simple in-memory sliding-window limiter for the costly AI endpoint (per client IP).
 AI_RATE_LIMIT = int(os.getenv("AI_RATE_LIMIT_PER_MIN", "10"))
 _ai_hits = defaultdict(deque)

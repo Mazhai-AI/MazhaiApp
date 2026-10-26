@@ -2,6 +2,7 @@ import json
 import os
 import time
 from datetime import datetime, timezone, date, timedelta
+from http.client import HTTPException as HTTPClientError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
@@ -43,9 +44,12 @@ def _get_json_once(url, params, expect_list=False):
         except Exception:
             pass
         raise ProviderError(f"Weather provider rejected the request (HTTP {exc.code}){': ' + reason if reason else ''}", retryable=exc.code in RETRYABLE_HTTP_STATUS) from exc
-    except (URLError, TimeoutError) as exc:
+    except (URLError, OSError, HTTPClientError) as exc:
+        # urllib only wraps connection-phase failures in URLError. Resets/SSL errors while reading the
+        # body (OSError) and truncated bodies (IncompleteRead) would otherwise escape as HTTP 500 and
+        # bypass both the retry and the stale-cache fallback.
         raise ProviderError(f"Weather provider unavailable: {exc.__class__.__name__}", retryable=True) from exc
-    except json.JSONDecodeError as exc:
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise ProviderError(f"Weather provider unavailable: {exc.__class__.__name__}") from exc
     # A single location answers with an object; several locations answer with a list of objects.
     if expect_list:
@@ -187,6 +191,9 @@ def get_history(district_id, start, end, force=False):
         raise ValueError("End date must be on or after start date")
     if (end_d - start_d).days > 3660:
         raise ValueError("Date range cannot exceed 10 years")
+    # date.fromisoformat also accepts "20261001" and "2026-W41-1"; the upstream API and the cache
+    # key must only ever see the canonical YYYY-MM-DD form.
+    start, end = start_d.isoformat(), end_d.isoformat()
     key = f"history:{district_id}:{start}:{end}"
     settled = end_d <= datetime.now(IST).date() - timedelta(days=HISTORY_SETTLED_AFTER_DAYS)
     cached = _cached(key, ttl=HISTORY_PAST_CACHE_TTL_SECONDS if settled else None)

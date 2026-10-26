@@ -5,6 +5,7 @@ import os
 import re
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
+from http.client import HTTPException as HTTPClientError
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 from ..districts import DISTRICTS
@@ -287,7 +288,10 @@ def _build_rainfall_alert(forecast_summary, history_summary=None):
     if level == "Routine" and returned_days and valid_days < min(5, returned_days):
         level = "Unable to assess"
 
-    if _is_number(max_daily) and max_daily == amount_peak and max_daily >= 25:
+    # The daily peak must be explained from the Watch threshold (10 mm) upward; with a higher
+    # cut-off a 10-25 mm day outside the 48-hour window produced "Watch" with a rationale
+    # claiming the amounts were below the Watch threshold.
+    if _is_number(max_daily) and max_daily == amount_peak and max_daily >= 10:
         rationale = f"The highest daily forecast is {max_daily:.1f} mm on {max_day.get('date') or 'an unspecified forecast date'}."
     elif _is_number(rain_48h) and rain_48h == amount_peak and rain_48h >= 10:
         rationale = f"The forecast indicates about {rain_48h:.1f} mm over the next 48 hours."
@@ -881,7 +885,9 @@ def ask_mistral(question, district_id=None, start=None, end=None, history=None, 
                 retry_answer = call_model(retry_messages)
                 retry_structured = _normalize_structured_answer(retry_answer) if retry_answer else None
                 retry_format_error = bool(retry_structured.pop("_parse_error", False)) if retry_structured is not None else True
-            except (KeyError, IndexError, TypeError, ValueError) as retry_exc:
+            except (HTTPError, URLError, OSError, HTTPClientError, KeyError, IndexError, TypeError, ValueError) as retry_exc:
+                # A network/HTTP failure on the *retry* must not discard the first answer or its
+                # recovered fields: fall through to the same fallbacks as an unparseable retry.
                 log.warning("Mistral format/language retry failed: %r", retry_exc)
                 retry_answer, retry_structured, retry_format_error = "", None, True
 
@@ -932,7 +938,9 @@ def ask_mistral(question, district_id=None, start=None, end=None, history=None, 
             pass
         log.error("Mistral HTTP %s (model=%s): %s", exc.code, model, detail)
         return {"available": False, "language": language, "message": _user_message(exc.code, language)}
-    except (URLError, TimeoutError) as exc:
+    except (URLError, OSError, HTTPClientError) as exc:
+        # OSError covers TimeoutError and connection resets/SSL errors raised while reading the
+        # response, which urllib does not wrap in URLError; HTTPClientError covers IncompleteRead.
         log.error("Mistral network error: %s", exc)
         message = ("Mistral சேவையை அணுக முடியவில்லை. வானிலை மற்றும் வரலாற்று அம்சங்கள் தொடர்ந்து கிடைக்கும்."
                    if language == "ta" else
