@@ -21,8 +21,9 @@ from fastapi.middleware.gzip import GZipMiddleware  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel, Field, field_validator  # noqa: E402
 from .districts import DISTRICTS  # noqa: E402
+from .places import places_for_district  # noqa: E402
 from .database.db import init_db, prune_cache  # noqa: E402
-from .services.weather import get_forecast, get_history, get_statewide_forecast, get_source_status, ProviderError  # noqa: E402
+from .services.weather import get_forecast, get_place_forecast, get_district_places_forecast, get_history, get_statewide_forecast, get_source_status, ProviderError  # noqa: E402
 from .services.ai import ask_mistral  # noqa: E402
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -123,12 +124,40 @@ def district_detail(district_id: str):
         raise HTTPException(404, "District not found")
     return {**district,"coordinate_note":"Representative district coordinates; town and station coverage may differ."}
 
+@app.get("/api/districts/{district_id}/places")
+def district_places(district_id: str):
+    """Towns / taluk headquarters inside a district, as map points (not boundaries)."""
+    district = next((d for d in DISTRICTS if d["id"] == district_id.casefold()), None)
+    if not district:
+        raise HTTPException(404, "District not found")
+    places = places_for_district(district["id"]) or []
+    return {"district": district, "count": len(places), "places": places, "coordinate_note": "Approximate town-centre points, not administrative boundaries. Weather for a place is a model/grid estimate at that point."}
+
 @app.get("/api/weather/forecast")
 def forecast(district_id: str = Query(..., min_length=2), refresh: bool = False):
     try:
         return get_forecast(district_id, force=refresh)
     except ValueError as exc:
         raise HTTPException(404 if str(exc) == "Unknown district" else 400, str(exc))
+    except ProviderError as exc:
+        raise HTTPException(503, {"message":str(exc),"hint":"Check network connectivity; retry later. No fabricated forecast is shown."})
+
+@app.get("/api/weather/place")
+def place_forecast(district_id: str = Query(..., min_length=2), place_id: str = Query(..., min_length=2), refresh: bool = False):
+    try:
+        return get_place_forecast(district_id, place_id, force=refresh)
+    except ValueError as exc:
+        raise HTTPException(404 if str(exc).startswith("Unknown") else 400, str(exc))
+    except ProviderError as exc:
+        raise HTTPException(503, {"message":str(exc),"hint":"Check network connectivity; retry later. No fabricated forecast is shown."})
+
+@app.get("/api/weather/district-places")
+def district_places_forecast(district_id: str = Query(..., min_length=2), refresh: bool = False):
+    """7-day forecast totals for every place in a district, fetched with a single upstream request."""
+    try:
+        return get_district_places_forecast(district_id, force=refresh)
+    except ValueError as exc:
+        raise HTTPException(404 if str(exc).startswith(("Unknown", "No places")) else 400, str(exc))
     except ProviderError as exc:
         raise HTTPException(503, {"message":str(exc),"hint":"Check network connectivity; retry later. No fabricated forecast is shown."})
 

@@ -77,6 +77,13 @@
 @keyframes wx-look-up{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
 @keyframes wx-spin{to{transform:rotate(360deg)}}
 @media(max-width:1050px){.wx-layout{grid-template-columns:1fr}.wx-details{max-height:none}.wx-layout #wx-map{height:390px}}
+/* Places inside a district */
+.legend-dot.wx-place-dot{background:#f2c230}
+.wx-place-rain{font-size:11px;color:var(--cyan);white-space:nowrap;margin-left:10px}
+.wx-daily{list-style:none;margin:8px 0 12px;padding:0;display:grid;gap:4px}
+.wx-daily li{display:grid;grid-template-columns:1fr auto auto;gap:12px;align-items:center;padding:6px 9px;border:1px solid var(--border);border-radius:7px;background:#0a1725;font-size:11px;color:var(--muted)}
+.wx-daily b{color:var(--cyan);font-weight:600}
+
 @media(max-width:600px){.wx-layout{padding:0 10px 12px;gap:10px}.wx-layout #wx-map{height:300px;min-height:260px}.wx-details{padding:13px}.wx-legend{gap:7px}.wx-legend-note{width:100%}}
 @media(prefers-reduced-motion:reduce){.wx-character,.wx-character-body,.wx-arm,.wx-rain-drops,.wx-umbrella,.wx-sun,.wx-sweat,.wx-cold-puffs,.wx-wave-lines,.wx-spinner{animation:none!important;transition:none!important}}
 /* Mazhai Weather Buddy avatar upgrade: append after the existing weather explorer CSS */

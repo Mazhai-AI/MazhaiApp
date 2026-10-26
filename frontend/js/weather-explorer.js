@@ -19,6 +19,17 @@ const explorerState = {
   localLayer: null,
   requestId: 0,
   avatarMessageVisible: false,
+  // Places (towns / taluk HQs) inside the selected district.
+  places: [],
+  placeMarkers: [],
+  placeTotals: {},
+  placesStatus: "idle", // idle | loading | ready | error
+  placesError: "",
+  placesRequestId: 0,
+  selectedPlace: null,
+  placeForecast: null,
+  placeRequestId: 0,
+  cityViewOpen: false, // Chennai ward view hides the place markers
 };
 
 const byId = (id) => document.getElementById(id);
@@ -45,6 +56,7 @@ function explorerMarkup() {
              aria-label="Interactive map of India and Tamil Nadu"></div>
         <div class="map-legend wx-legend">
           <span><i class="legend-dot rain-mid"></i> Tamil Nadu district reference point</span>
+          <span><i class="legend-dot wx-place-dot"></i> Town / taluk HQ in the selected district</span>
           <span class="wx-legend-note">Markers are representative coordinates, not boundaries.</span>
         </div>
       </div>
@@ -369,8 +381,11 @@ function avatarMarkup(forecast, locationName) {
   </section>`;
 }
 
-function weatherDetails(forecast) {
+function weatherDetails(forecast, scope = "district") {
   const c = forecast?.current || {};
+  const where = scope === "place"
+    ? "this place’s approximate town coordinates (about a 10 km model grid)"
+    : "this district’s representative coordinates";
   return `<div class="wx-weather-stats">
     <div><span>Temperature</span><b>${number(c.temperature_c)} °C</b></div>
     <div><span>Precipitation</span><b>${number(c.precipitation_mm)} mm</b></div>
@@ -378,7 +393,222 @@ function weatherDetails(forecast) {
     <div><span>Wind</span><b>${number(c.wind_kmh)} km/h</b></div>
   </div>
   <p class="wx-source-note">${safe(forecast?.source || "Weather source unavailable")} · ${forecast?.retrieved_at ? `updated ${safe(new Date(forecast.retrieved_at).toLocaleString(getLanguage() === "ta" ? "ta-IN" : "en-IN"))}` : "update time unavailable"}${forecast?.stale ? " · cached/stale data" : ""}</p>
-  <p class="wx-data-note">Weather is a model/grid estimate at this district’s representative coordinates, not a local weather-station observation. It is not an official warning.</p>`;
+  <p class="wx-data-note">Weather is a model/grid estimate at ${where}, not a local weather-station observation. It is not an official warning.</p>`;
+}
+
+function dailyOutlook(forecast) {
+  const days = Array.isArray(forecast?.daily) ? forecast.daily : [];
+  if (!days.length) return "";
+  const locale = getLanguage() === "ta" ? "ta-IN" : "en-IN";
+  const rows = days.map((d) => {
+    const when = d.date ? new Date(`${d.date}T00:00:00`) : null;
+    const label = when && !Number.isNaN(when.getTime())
+      ? when.toLocaleDateString(locale, { weekday: "short", day: "numeric", month: "short" })
+      : safe(d.date || "—");
+    return `<li><span>${label}</span><b>${number(d.precipitation_mm)} mm</b>
+      <span>${number(d.temp_min_c, 0)}–${number(d.temp_max_c, 0)} °C</span></li>`;
+  }).join("");
+  return `<div class="wx-panel-eyebrow">7-DAY OUTLOOK</div><ul class="wx-daily">${rows}</ul>`;
+}
+
+/* ---------- Places inside a district ---------- */
+
+function clearPlaceMarkers() {
+  const map = explorerState.map;
+  explorerState.placeMarkers.forEach((marker) => map?.removeLayer(marker));
+  explorerState.placeMarkers = [];
+}
+
+function resetPlaces() {
+  explorerState.placesRequestId += 1; // drop any in-flight places response
+  explorerState.placeRequestId += 1;
+  explorerState.places = [];
+  explorerState.placeTotals = {};
+  explorerState.placesStatus = "idle";
+  explorerState.placesError = "";
+  explorerState.selectedPlace = null;
+  explorerState.placeForecast = null;
+  explorerState.cityViewOpen = false;
+  clearPlaceMarkers();
+}
+
+function placeRain(place) {
+  const total = explorerState.placeTotals?.[place.id];
+  return typeof total === "number" && Number.isFinite(total) ? total : null;
+}
+
+function drawPlaceMarkers() {
+  const map = explorerState.map;
+  if (!map) return;
+  clearPlaceMarkers();
+  if (explorerState.cityViewOpen) return;
+  for (const place of explorerState.places) {
+    const selected = place.id === explorerState.selectedPlace?.id;
+    const marker = L.circleMarker([place.lat, place.lon], {
+      radius: selected ? 8 : 5,
+      color: selected ? "#ffffff" : "#07111f",
+      weight: selected ? 2 : 1.2,
+      fillColor: "#f2c230",
+      fillOpacity: 0.95,
+    }).addTo(map);
+    const rain = placeRain(place);
+    marker.bindTooltip(
+      `${safe(place.name)}${rain === null ? "" : `<br>7-day rain: ${number(rain)} mm`}`,
+      { direction: "top", offset: [0, -5] },
+    );
+    marker.on("click", () => selectPlace(place));
+    marker.bringToFront();
+    explorerState.placeMarkers.push(marker);
+  }
+}
+
+function fitDistrictToPlaces(district) {
+  // Chennai's ward layer already frames the city.
+  if (district.id === "chennai" || !explorerState.places.length || !explorerState.map) return;
+  const points = explorerState.places.map((p) => [p.lat, p.lon]);
+  points.push([district.lat, district.lon]);
+  explorerState.map.fitBounds(L.latLngBounds(points), { padding: [28, 28], maxZoom: 10 });
+}
+
+function renderPlacesSection() {
+  const section = byId("wx-places-section");
+  if (!section) return;
+  const district = explorerState.selectedDistrict;
+  const name = safe(district?.name || "this district");
+  const eyebrow = `<div class="wx-panel-eyebrow">PLACES IN ${safe((district?.name || "DISTRICT").toUpperCase())}</div>`;
+  if (explorerState.placesStatus === "loading") {
+    section.innerHTML = `${eyebrow}<p class="wx-muted">Loading places…</p>`;
+    return;
+  }
+  if (explorerState.placesStatus === "error") {
+    section.innerHTML = `${eyebrow}<p class="wx-muted">Places could not be loaded: ${safe(explorerState.placesError)}</p>
+      <button type="button" class="btn btn-secondary wx-full" id="wx-places-retry">Retry</button>`;
+    byId("wx-places-retry")?.addEventListener("click", () => district && loadDistrictPlaces(district));
+    return;
+  }
+  if (!explorerState.places.length) {
+    section.innerHTML = `${eyebrow}<p class="wx-muted">No places are configured for ${name} yet.</p>`;
+    return;
+  }
+  const items = explorerState.places.map((place) => {
+    const rain = placeRain(place);
+    return `<button class="wx-place-button" type="button" data-wx-place="${safe(place.id)}">
+      <span>${safe(place.name)}</span>
+      <span class="wx-place-rain">${rain === null ? "›" : `${number(rain)} mm`}</span></button>`;
+  }).join("");
+  const hasTotals = Object.keys(explorerState.placeTotals || {}).length > 0;
+  section.innerHTML = `${eyebrow}
+    <p class="wx-muted">Select a town on the map or in this list to check its weather.${hasTotals ? " Figures show forecast rain for the next 7 days." : ""}</p>
+    <div class="wx-place-list">${items}</div>
+    <p class="wx-data-note">Towns are approximate points, not boundaries. Values are model/grid estimates, not station readings.</p>`;
+}
+
+async function loadDistrictPlaces(district) {
+  const token = ++explorerState.placesRequestId;
+  explorerState.places = [];
+  explorerState.placeTotals = {};
+  explorerState.placesStatus = "loading";
+  explorerState.placesError = "";
+  clearPlaceMarkers();
+  renderPlacesSection();
+  try {
+    const data = await getJSON(`${API_BASE}/districts/${encodeURIComponent(district.id)}/places`);
+    if (token !== explorerState.placesRequestId) return;
+    explorerState.places = Array.isArray(data.places) ? data.places : [];
+    explorerState.placesStatus = "ready";
+    drawPlaceMarkers();
+    if (!explorerState.selectedPlace) fitDistrictToPlaces(district);
+    renderPlacesSection();
+  } catch (error) {
+    if (token !== explorerState.placesRequestId) return;
+    explorerState.placesStatus = "error";
+    explorerState.placesError = error.message;
+    renderPlacesSection();
+    return;
+  }
+  // Rain totals are a bonus: the list and map work without them.
+  try {
+    const data = await getJSON(`${API_BASE}/weather/district-places?district_id=${encodeURIComponent(district.id)}`);
+    if (token !== explorerState.placesRequestId) return;
+    explorerState.placeTotals = Object.fromEntries(
+      (Array.isArray(data.places) ? data.places : []).map((p) => [p.place_id, p.total_mm]),
+    );
+    drawPlaceMarkers();
+    // Don't rebuild the list while a single place is open in the panel.
+    if (!explorerState.selectedPlace) renderPlacesSection();
+  } catch {
+    // Totals unavailable (offline / rate-limited): keep the plain list.
+  }
+}
+
+async function selectPlace(place) {
+  const district = explorerState.selectedDistrict;
+  if (!district || !place) return;
+  const requestId = ++explorerState.placeRequestId;
+  explorerState.selectedPlace = place;
+  explorerState.placeForecast = null;
+  explorerState.avatarMessageVisible = false;
+  drawPlaceMarkers();
+  explorerState.map.flyTo([place.lat, place.lon], 11, { duration: 0.6 });
+  updateBreadcrumb(`India → Tamil Nadu → ${district.name} → ${place.name}`);
+  updateBackButton(true);
+  const content = byId("wx-detail-content");
+  if (!content) return;
+  content.innerHTML = `<div class="wx-loading"><span class="wx-spinner"></span><p>Loading ${safe(place.name)} weather…</p></div>`;
+  try {
+    const query = `district_id=${encodeURIComponent(district.id)}&place_id=${encodeURIComponent(place.id)}`;
+    const forecast = await getJSON(`${API_BASE}/weather/place?${query}`);
+    if (requestId !== explorerState.placeRequestId) return;
+    explorerState.placeForecast = forecast;
+    renderPlaceDetail(place, forecast);
+  } catch (error) {
+    if (requestId !== explorerState.placeRequestId) return;
+    content.innerHTML = `<div class="wx-error"><h3>${safe(place.name)}</h3>
+      <p>Weather could not be loaded: ${safe(error.message)}</p>
+      <button type="button" class="btn btn-secondary" id="wx-retry">Retry</button>
+      <button type="button" class="btn btn-secondary wx-full" id="wx-place-back">← ${safe(district.name)} places</button></div>`;
+    byId("wx-retry")?.addEventListener("click", () => selectPlace(place));
+    byId("wx-place-back")?.addEventListener("click", backToDistrict);
+  }
+}
+
+function renderPlaceDetail(place, forecast) {
+  const content = byId("wx-detail-content");
+  const district = explorerState.selectedDistrict;
+  if (!content || !district) return;
+  content.innerHTML = `<div class="wx-panel-eyebrow">SELECTED PLACE</div>
+    <h3>${safe(place.name)}</h3>
+    <p class="wx-muted">${safe(district.name)} district, Tamil Nadu · approximate town coordinates</p>
+    ${avatarMarkup(forecast, place.name)}
+    ${weatherDetails(forecast, "place")}
+    <div class="wx-section-divider"></div>
+    ${dailyOutlook(forecast)}
+    <button type="button" class="btn btn-secondary wx-full" id="wx-place-back">← ${safe(district.name)} places</button>`;
+  byId("wx-avatar-button")?.addEventListener("click", () => {
+    explorerState.avatarMessageVisible = !explorerState.avatarMessageVisible;
+    renderPlaceDetail(place, forecast);
+  });
+  byId("wx-place-back")?.addEventListener("click", backToDistrict);
+}
+
+function backToDistrict() {
+  const district = explorerState.selectedDistrict;
+  if (!district) return;
+  explorerState.placeRequestId += 1; // cancel any in-flight place request
+  explorerState.selectedPlace = null;
+  explorerState.placeForecast = null;
+  explorerState.avatarMessageVisible = false;
+  explorerState.cityViewOpen = false;
+  updateBreadcrumb(`India → Tamil Nadu → ${district.name}`);
+  if (!explorerState.forecast) {
+    selectDistrict(district);
+    return;
+  }
+  drawPlaceMarkers();
+  if (district.id === "chennai") explorerState.map.flyTo([13.0827, 80.2707], 11, { duration: 0.6 });
+  else if (explorerState.places.length) fitDistrictToPlaces(district);
+  else explorerState.map.flyTo([district.lat, district.lon], 8, { duration: 0.6 });
+  renderDistrictDetail(district, explorerState.forecast);
 }
 
 async function selectDistrict(district) {
@@ -388,6 +618,12 @@ async function selectDistrict(district) {
   explorerState.selectedArea = null;
   explorerState.avatarMessageVisible = false;
   explorerState.forecast = null;
+  resetPlaces();
+  // A previous district's ward polygons (Chennai) must not linger under another district.
+  if (explorerState.localLayer) {
+    explorerState.map.removeLayer(explorerState.localLayer);
+    explorerState.localLayer = null;
+  }
   addDistrictMarkers();
   explorerState.map.flyTo([district.lat, district.lon], district.id === "chennai" ? 10 : 8, { duration: 0.7 });
   updateBreadcrumb(`India → Tamil Nadu → ${district.name}`);
@@ -395,18 +631,27 @@ async function selectDistrict(district) {
   const content = byId("wx-detail-content");
   content.innerHTML = `<div class="wx-loading"><span class="wx-spinner"></span><p>Loading ${safe(district.name)} weather…</p></div>`;
 
+  // Places load in parallel and independently of the district forecast.
+  loadDistrictPlaces(district);
+
   try {
     const forecast = await getJSON(`${API_BASE}/weather/forecast?district_id=${encodeURIComponent(district.id)}`);
     if (requestId !== explorerState.requestId) return;
     explorerState.forecast = forecast;
+    // The user may have opened a place while the district forecast was still loading.
+    if (explorerState.selectedPlace) return;
     renderDistrictDetail(district, forecast);
     if (district.id === "chennai") loadChennaiBoundaries();
   } catch (error) {
     if (requestId !== explorerState.requestId) return;
+    if (explorerState.selectedPlace) return;
     content.innerHTML = `<div class="wx-error"><h3>${safe(district.name)}</h3>
       <p>Weather could not be loaded: ${safe(error.message)}</p>
-      <button type="button" class="btn btn-secondary" id="wx-retry">Retry</button></div>`;
+      <button type="button" class="btn btn-secondary" id="wx-retry">Retry</button></div>
+      <div class="wx-section-divider"></div>
+      <div id="wx-places-section"></div>`;
     byId("wx-retry")?.addEventListener("click", () => selectDistrict(district));
+    renderPlacesSection();
   }
 }
 
@@ -419,14 +664,17 @@ function renderDistrictDetail(district, forecast) {
     ${avatarMarkup(forecast, district.name)}
     ${weatherDetails(forecast)}
     <div class="wx-section-divider"></div>
+    <div id="wx-places-section"></div>
+    <div class="wx-section-divider"></div>
     <div class="wx-panel-eyebrow">GEOGRAPHIC DETAIL</div>
     <h4>${district.id === "chennai" ? "Greater Chennai" : district.name}</h4>
     <p class="wx-muted">${district.id === "chennai"
       ? "Open the city view to inspect supported corporation zones or wards."
-      : "City and ward boundaries are not included in the current district directory."}</p>
+      : "Town and taluk boundaries are not included in the current district directory. Use the places above to check individual towns."}</p>
     ${district.id === "chennai"
       ? '<button type="button" class="btn btn-primary wx-full" id="wx-open-city">Open Chennai map ↗</button>'
-      : '<div class="wx-boundary-unavailable">Detailed city boundaries are not configured for this district.</div>'}`;
+      : '<div class="wx-boundary-unavailable">Detailed boundaries are not configured for this district.</div>'}`;
+  renderPlacesSection();
   byId("wx-avatar-button")?.addEventListener("click", () => {
     explorerState.avatarMessageVisible = !explorerState.avatarMessageVisible;
     renderDistrictDetail(district, forecast);
@@ -435,6 +683,11 @@ function renderDistrictDetail(district, forecast) {
 }
 
 function openChennaiView(district) {
+  // Hide the place markers while the 200 ward polygons are being explored.
+  explorerState.cityViewOpen = true;
+  explorerState.selectedPlace = null;
+  explorerState.placeRequestId += 1;
+  drawPlaceMarkers();
   explorerState.map.flyTo([13.0827, 80.2707], 11, { duration: 0.8 });
   updateBreadcrumb("India → Tamil Nadu → Chennai → local boundaries");
   const content = byId("wx-detail-content");
@@ -450,7 +703,11 @@ function openChennaiView(district) {
     explorerState.avatarMessageVisible = !explorerState.avatarMessageVisible;
     openChennaiView(district);
   });
-  byId("wx-city-back")?.addEventListener("click", () => renderDistrictDetail(district, explorerState.forecast));
+  byId("wx-city-back")?.addEventListener("click", () => {
+    explorerState.cityViewOpen = false;
+    drawPlaceMarkers();
+    renderDistrictDetail(district, explorerState.forecast);
+  });
   loadChennaiBoundaries();
 }
 
@@ -551,15 +808,27 @@ async function bootWeatherExplorer() {
     if (button) {
       const item = explorerState.districts.find((d) => d.id === button.dataset.wxDistrict);
       if (item) selectDistrict(item);
+      return;
+    }
+    const placeButton = event.target.closest("[data-wx-place]");
+    if (placeButton) {
+      const place = explorerState.places.find((p) => p.id === placeButton.dataset.wxPlace);
+      if (place) selectPlace(place);
     }
   });
 
   byId("wx-back")?.addEventListener("click", () => {
+    if (explorerState.selectedPlace) {
+      backToDistrict();
+      return;
+    }
     if (explorerState.selectedArea || explorerState.selectedDistrict?.id === "chennai") {
       if (explorerState.selectedDistrict?.id === "chennai") {
         explorerState.selectedArea = null;
+        explorerState.cityViewOpen = false;
         if (explorerState.localLayer) explorerState.map.removeLayer(explorerState.localLayer);
         explorerState.localLayer = null;
+        drawPlaceMarkers();
         explorerState.map.setView([13.0827, 80.2707], 10);
         renderDistrictDetail(explorerState.selectedDistrict, explorerState.forecast);
         updateBreadcrumb("India → Tamil Nadu → Chennai");
@@ -572,6 +841,8 @@ async function bootWeatherExplorer() {
       explorerState.selectedDistrict = null;
       explorerState.forecast = null;
       explorerState.selectedArea = null;
+      resetPlaces(); // the previous district's town markers must not stay on the state map
+      addDistrictMarkers();
       explorerState.map.setView([22.7, 79.0], 4.5);
       updateBreadcrumb("India · select a state or Tamil Nadu district");
       updateBackButton(false);

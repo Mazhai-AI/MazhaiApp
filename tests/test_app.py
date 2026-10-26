@@ -776,5 +776,204 @@ class ReliabilityTests(unittest.TestCase):
             main._ai_hits.clear()
 
 
+def _distance_km(lat1, lon1, lat2, lon2):
+    from math import asin, cos, radians, sin, sqrt
+    d_lat, d_lon = radians(lat2 - lat1), radians(lon2 - lon1)
+    a = sin(d_lat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(d_lon / 2) ** 2
+    return 2 * 6371 * asin(sqrt(a))
+
+
+def _requested_coordinates(req):
+    from urllib.parse import parse_qs, urlparse
+    query = parse_qs(urlparse(req.full_url).query)
+    return query["latitude"][0].split(","), query["longitude"][0].split(",")
+
+
+class PlacesTests(unittest.TestCase):
+    """Towns / taluk HQs inside each district, and their weather."""
+
+    @classmethod
+    def setUpClass(cls):
+        db.init_db()
+        cls.client = TestClient(main.app)
+
+    def setUp(self):
+        self._saved = (weather.urlopen, weather.RETRY_BACKOFF_SECONDS, weather.UPSTREAM_RETRIES, weather.places_for_district)
+        weather.RETRY_BACKOFF_SECONDS = 0
+        weather.UPSTREAM_RETRIES = 0
+        with db.connect() as c:
+            c.execute("DELETE FROM api_cache WHERE cache_key LIKE 'places:%' OR cache_key LIKE 'forecast:%:%'")
+
+    def tearDown(self):
+        weather.urlopen, weather.RETRY_BACKOFF_SECONDS, weather.UPSTREAM_RETRIES, weather.places_for_district = self._saved
+
+    @staticmethod
+    def forecast_ok(req, timeout=None):
+        return FakeResp({
+            "current": {"time": "2026-10-26T06:00", "temperature_2m": 26, "relative_humidity_2m": 80,
+                        "precipitation": 0.4, "wind_speed_10m": 9, "wind_direction_10m": 90, "cloud_cover": 60},
+            "daily": {"time": ["2026-10-26"], "precipitation_sum": [4.0], "precipitation_probability_max": [60],
+                      "temperature_2m_max": [31], "temperature_2m_min": [24]},
+            "hourly": {"time": ["2026-10-26T06:00"], "precipitation": [0.4], "precipitation_probability": [50], "temperature_2m": [26]},
+            "timezone": "Asia/Kolkata",
+        })
+
+    # --- dataset -----------------------------------------------------------
+    def test_every_district_has_places_and_no_unknown_districts(self):
+        from backend.app.districts import DISTRICTS
+        from backend.app.places import PLACES_BY_DISTRICT
+        self.assertEqual(set(PLACES_BY_DISTRICT), {d["id"] for d in DISTRICTS})
+        for district_id, places in PLACES_BY_DISTRICT.items():
+            self.assertGreaterEqual(len(places), 2, district_id)
+
+    def test_place_ids_are_unique_url_safe_and_named(self):
+        import re
+        from backend.app.places import PLACES_BY_DISTRICT
+        for district_id, places in PLACES_BY_DISTRICT.items():
+            ids = [p["id"] for p in places]
+            self.assertEqual(len(ids), len(set(ids)), f"duplicate place id in {district_id}")
+            for place in places:
+                self.assertRegex(place["id"], r"^[a-z0-9]+(-[a-z0-9]+)*$")
+                self.assertTrue(place["name"].strip())
+                self.assertEqual(place["district_id"], district_id)
+
+    def test_place_coordinates_are_inside_tamil_nadu_and_near_their_district(self):
+        from backend.app.districts import DISTRICTS
+        from backend.app.places import PLACES_BY_DISTRICT
+        by_id = {d["id"]: d for d in DISTRICTS}
+        for district_id, places in PLACES_BY_DISTRICT.items():
+            district = by_id[district_id]
+            for place in places:
+                label = f"{place['name']} ({district_id})"
+                self.assertTrue(8.0 <= place["lat"] <= 13.6 and 76.2 <= place["lon"] <= 80.4, label)
+                # Catches swapped digits / wrong-district entries; not a substitute for a gazetteer check.
+                self.assertLess(_distance_km(district["lat"], district["lon"], place["lat"], place["lon"]), 90, label)
+
+    # --- /api/districts/{id}/places -----------------------------------------
+    def test_places_endpoint_lists_district_places(self):
+        data = self.client.get("/api/districts/SALEM/places").json()
+        self.assertEqual(data["district"]["id"], "salem")
+        self.assertEqual(data["count"], len(data["places"]))
+        self.assertIn("Mettur", [p["name"] for p in data["places"]])
+        self.assertIn("not administrative boundaries", data["coordinate_note"])
+
+    def test_places_endpoint_unknown_district_is_404(self):
+        self.assertEqual(self.client.get("/api/districts/atlantis/places").status_code, 404)
+
+    # --- /api/weather/place --------------------------------------------------
+    def test_place_forecast_uses_the_places_own_coordinates(self):
+        seen = []
+
+        def spy(req, timeout=None):
+            seen.append(_requested_coordinates(req))
+            return self.forecast_ok(req)
+
+        weather.urlopen = spy
+        data = self.client.get("/api/weather/place?district_id=salem&place_id=mettur").json()
+        self.assertEqual(seen, [(["11.79"], ["77.8"])])
+        self.assertEqual(data["place"]["name"], "Mettur")
+        self.assertEqual(data["district"]["id"], "salem")
+        self.assertEqual(data["current"]["temperature_c"], 26)
+        self.assertEqual(data["daily"][0]["precipitation_mm"], 4.0)
+        self.assertFalse(data["cached"])
+
+    def test_place_forecast_is_cached_separately_from_the_district_forecast(self):
+        calls = []
+
+        def counting(req, timeout=None):
+            calls.append(_requested_coordinates(req))
+            return self.forecast_ok(req)
+
+        weather.urlopen = counting
+        self.client.get("/api/weather/place?district_id=salem&place_id=mettur")
+        again = self.client.get("/api/weather/place?district_id=salem&place_id=mettur").json()
+        self.assertTrue(again["cached"])
+        self.assertEqual(len(calls), 1)
+        # The district-level forecast must not be served from (or overwritten by) the place's cache entry.
+        district = self.client.get("/api/weather/forecast?district_id=salem&refresh=true").json()
+        self.assertNotIn("place", district)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1], (["11.6643"], ["78.146"]))
+
+    def test_place_forecast_rejects_unknown_district_and_place(self):
+        weather.urlopen = self.forecast_ok
+        self.assertEqual(self.client.get("/api/weather/place?district_id=atlantis&place_id=mettur").status_code, 404)
+        self.assertEqual(self.client.get("/api/weather/place?district_id=salem&place_id=nowhere").status_code, 404)
+        # A real place id from a different district is not valid here.
+        self.assertEqual(self.client.get("/api/weather/place?district_id=salem&place_id=pollachi").status_code, 404)
+
+    def test_place_forecast_provider_failure_is_503_not_fabricated(self):
+        from urllib.error import URLError
+
+        def down(req, timeout=None):
+            raise URLError("offline")
+
+        weather.urlopen = down
+        response = self.client.get("/api/weather/place?district_id=salem&place_id=yercaud")
+        self.assertEqual(response.status_code, 503)
+
+    # --- /api/weather/district-places ---------------------------------------
+    def test_district_places_uses_one_upstream_call_and_keeps_unknown_unknown(self):
+        from backend.app.places import places_for_district
+        places = places_for_district("salem")
+        calls = []
+
+        def multi(req, timeout=None):
+            calls.append(_requested_coordinates(req))
+            items = [{"daily": {"precipitation_sum": [1.0] * 7}} for _ in places]
+            items[0] = {"daily": {"precipitation_sum": [None] * 7}}
+            items[1] = {"daily": {"precipitation_sum": [2.0, None, 3.0, 0, 0, 0, 0]}}
+            return FakeResp(items)
+
+        weather.urlopen = multi
+        data = self.client.get("/api/weather/district-places?district_id=salem").json()
+        self.assertEqual(len(calls), 1)
+        lats, lons = calls[0]
+        self.assertEqual(len(lats), len(places))
+        self.assertEqual(lats[0], str(places[0]["lat"]))
+        self.assertEqual(lons[1], str(places[1]["lon"]))
+        rows = data["places"]
+        self.assertEqual([r["place_id"] for r in rows], [p["id"] for p in places])
+        self.assertIsNone(rows[0]["total_mm"])           # no valid day -> unknown, never 0
+        self.assertEqual(rows[0]["valid_days"], 0)
+        self.assertEqual(rows[1]["total_mm"], 5.0)
+        self.assertEqual(rows[1]["max_daily_mm"], 3.0)
+        self.assertEqual(rows[2]["total_mm"], 7.0)
+        again = self.client.get("/api/weather/district-places?district_id=salem").json()
+        self.assertTrue(again["cached"])
+        self.assertEqual(len(calls), 1)
+
+    def test_district_places_rejects_mismatched_location_count(self):
+        weather.urlopen = lambda req, timeout=None: FakeResp([{"daily": {"precipitation_sum": [1] * 7}}])
+        self.assertEqual(self.client.get("/api/weather/district-places?district_id=salem").status_code, 503)
+
+    def test_district_places_unknown_district_is_404(self):
+        self.assertEqual(self.client.get("/api/weather/district-places?district_id=atlantis").status_code, 404)
+
+    def test_district_places_accepts_a_single_location_object(self):
+        # Open-Meteo answers one coordinate with an object rather than a list.
+        only = {"id": "solo", "name": "Solo", "district_id": "salem", "lat": 11.5, "lon": 78.0}
+        weather.places_for_district = lambda district_id: [only]
+        weather.urlopen = lambda req, timeout=None: FakeResp({"daily": {"precipitation_sum": [1.5] * 7}})
+        data = self.client.get("/api/weather/district-places?district_id=salem&refresh=true").json()
+        self.assertEqual([r["place_id"] for r in data["places"]], ["solo"])
+        self.assertEqual(data["places"][0]["total_mm"], 10.5)
+
+    def test_district_places_falls_back_to_stale_cache_when_provider_is_down(self):
+        from backend.app.places import places_for_district
+        count = len(places_for_district("salem"))
+        weather.urlopen = lambda req, timeout=None: FakeResp([{"daily": {"precipitation_sum": [1.0] * 7}}] * count)
+        self.assertEqual(self.client.get("/api/weather/district-places?district_id=salem").status_code, 200)
+        from urllib.error import URLError
+
+        def down(req, timeout=None):
+            raise URLError("offline")
+
+        weather.urlopen = down
+        data = self.client.get("/api/weather/district-places?district_id=salem&refresh=true").json()
+        self.assertTrue(data["stale"])
+        self.assertIn("warning", data)
+
+
 if __name__ == "__main__":
     unittest.main()
