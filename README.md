@@ -10,6 +10,7 @@ Mazhai AI is a full-stack web application with an HTML/CSS/vanilla JavaScript fr
 - Historical summaries, interactive charts, and CSV export.
 - District comparison for a selected period.
 - Leaflet district-reference map and district explorer.
+- Places inside a district: selecting a district shows its towns / taluk headquarters as map points and as a list (with each place's 7-day forecast rain, from one multi-location request). Selecting a place opens its own current conditions and 7-day outlook, fetched at that place's coordinates.
 - Source registry, data freshness, cached-data fallback, and transparent provider limitations.
 - Optional Mistral assistant that receives retrieved weather/history evidence and returns validated structured sections (current forecast, historical context, what to watch, actions, and limitations).
 - English/Tamil interface language selector in Settings, saved in the browser; the AI assistant follows the selected language for response content.
@@ -23,6 +24,7 @@ Mazhai AI is a full-stack web application with an HTML/CSS/vanilla JavaScript fr
 ## Important data limitations
 
 - Open-Meteo forecast responses are model forecasts; historical API values are reanalysis/grid estimates. They are **not direct IMD rain-gauge observations** and the representative coordinates are not district boundaries.
+- Places are approximate **points** (town centres, rounded to ~0.01°), not taluk or town boundaries, and their coordinates were compiled by hand rather than imported from an official gazetteer. Place weather comes from the same ~10 km model grid, so nearby places can show identical values. Review or extend the list in `backend/app/places.py`.
 - Coverage can vary by date and location. Missing values are not treated as zero.
 - IMD data and official warnings are listed as not integrated. The application links to IMD, but does not claim to ingest or reproduce official warnings.
 - This initial version does not ingest verified historical flood/incident reports, does not train a local ML model, and does not issue flood forecasts or emergency alerts.
@@ -93,6 +95,9 @@ Never put the key in frontend files, browser storage, or a committed repository.
 - `GET /api/districts?q=...`
 - `GET /api/districts/{district_id}`
 - `GET /api/weather/forecast?district_id=chennai&refresh=false`
+- `GET /api/districts/{district_id}/places` (towns / taluk HQs inside a district)
+- `GET /api/weather/place?district_id=salem&place_id=mettur&refresh=false` (forecast at one place)
+- `GET /api/weather/district-places?district_id=salem&refresh=false` (7-day totals for every place in a district, one upstream request)
 - `GET /api/weather/statewide?refresh=false` (7-day forecast totals for all districts, one upstream request)
 - `GET /api/rainfall/history?district_id=chennai&start=2026-09-01&end=2026-10-01`
 - `GET /api/rainfall/summary?district_id=chennai&start=2026-09-01&end=2026-10-01`
@@ -111,7 +116,7 @@ python -m pip install httpx
 python -m unittest discover -s tests -v
 ```
 
-Tests cover `.env` load order, district-ID normalization, API validation, language selection/AI language instructions, comparison, the AI layer (string/list answers, chat history, error mapping, malformed responses), upstream retries, cache TTLs and pruning, the statewide endpoint, SQLite WAL mode, security headers/gzip, and the AI rate limiter, all with mocked upstreams. Real-provider integration requires network access and is intentionally not part of deterministic unit tests.
+Tests cover `.env` load order, district-ID normalization, API validation, language selection/AI language instructions, comparison, the AI layer (string/list answers, chat history, error mapping, malformed responses), upstream retries, cache TTLs and pruning, the statewide endpoint, the places dataset (every district covered, unique ids, coordinates inside Tamil Nadu and near the district) and the place endpoints, SQLite WAL mode, security headers/gzip, and the AI rate limiter, all with mocked upstreams. Real-provider integration requires network access and is intentionally not part of deterministic unit tests.
 
 ## Architecture
 
@@ -119,6 +124,7 @@ Tests cover `.env` load order, district-ID normalization, API validation, langua
 frontend/               Static HTML, CSS, JavaScript modules
 backend/app/main.py     FastAPI routes and static frontend hosting
 backend/app/districts.py District directory
+backend/app/places.py    Towns / taluk HQs per district (point data)
 backend/app/services/   Weather and Mistral integrations
 backend/app/database/   SQLite schema and connection handling
 data/                   Runtime database (created automatically)

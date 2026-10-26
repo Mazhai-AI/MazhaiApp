@@ -7,6 +7,7 @@ from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 from ..database.db import connect
 from ..districts import DISTRICTS
+from ..places import place_by_id, places_for_district
 
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
@@ -87,17 +88,17 @@ def _save_cache(key, payload):
 def district_by_id(district_id):
     return next((d for d in DISTRICTS if d["id"] == str(district_id).strip().lower()), None)
 
-def get_forecast(district_id, force=False):
-    district = district_by_id(district_id)
-    if not district:
-        raise ValueError("Unknown district")
-    district_id = district["id"]
-    key = f"forecast:{district_id}"
+def _forecast_for(key, location, extra, force):
+    """Cached 7-day forecast for ``location`` (any mapping with lat/lon).
+
+    ``extra`` is merged into the payload to say what the point represents (a district, or a
+    place inside one). Cache lookup, TTL and stale-fallback behaviour are shared by both.
+    """
     cached = _cached(key)
     if cached and not force and not cached["stale"]:
         return {**cached["payload"], "cached": True, "stale": False, "retrieved_at": cached["fetched_at"]}
     params = {
-        "latitude": district["lat"], "longitude": district["lon"],
+        "latitude": location["lat"], "longitude": location["lon"],
         "current": "temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m,wind_direction_10m,cloud_cover",
         "hourly": "precipitation,precipitation_probability,temperature_2m",
         "daily": "precipitation_sum,precipitation_probability_max,temperature_2m_max,temperature_2m_min",
@@ -121,7 +122,7 @@ def get_forecast(district_id, force=False):
         hourly_end = min(hourly_start + 48, len(hourly_times))
         hourly_indices = range(hourly_start, hourly_end)
         payload = {
-            "district": district, "source": "Open-Meteo Forecast API",
+            **extra, "source": "Open-Meteo Forecast API",
             "source_url": "https://open-meteo.com/en/docs",
             "model_timezone": raw.get("timezone", "Asia/Kolkata"),
             "current": {
@@ -153,6 +154,22 @@ def get_forecast(district_id, force=False):
         if cached:
             return {**cached["payload"], "cached": True, "stale": True, "retrieved_at": cached["fetched_at"], "warning": "Provider unavailable; showing cached data."}
         raise
+
+def get_forecast(district_id, force=False):
+    district = district_by_id(district_id)
+    if not district:
+        raise ValueError("Unknown district")
+    return _forecast_for(f"forecast:{district['id']}", district, {"district": district}, force)
+
+def get_place_forecast(district_id, place_id, force=False):
+    """Forecast at a place (town/taluk HQ) inside a district; same shape as ``get_forecast``."""
+    district = district_by_id(district_id)
+    if not district:
+        raise ValueError("Unknown district")
+    place = place_by_id(district["id"], place_id)
+    if not place:
+        raise ValueError("Unknown place")
+    return _forecast_for(f"forecast:{district['id']}:{place['id']}", place, {"district": district, "place": place}, force)
 
 def _at(values, i):
     return values[i] if isinstance(values, list) and i < len(values) else None
@@ -230,6 +247,56 @@ def get_statewide_forecast(force=False):
             "fetched_live": True,
         }
         fetched_at = _save_cache(STATEWIDE_CACHE_KEY, payload)
+        return {**payload, "cached": False, "stale": False, "retrieved_at": fetched_at}
+    except ProviderError:
+        if cached:
+            return {**cached["payload"], "cached": True, "stale": True, "retrieved_at": cached["fetched_at"], "warning": "Provider unavailable; showing cached data."}
+        raise
+
+def get_district_places_forecast(district_id, force=False):
+    """7-day precipitation totals for every place in a district from ONE multi-location request."""
+    district = district_by_id(district_id)
+    if not district:
+        raise ValueError("Unknown district")
+    places = places_for_district(district["id"]) or []
+    if not places:
+        raise ValueError("No places configured for this district")
+    key = f"places:{district['id']}"
+    cached = _cached(key)
+    if cached and not force and not cached["stale"]:
+        return {**cached["payload"], "cached": True, "stale": False, "retrieved_at": cached["fetched_at"]}
+    params = {
+        "latitude": ",".join(str(p["lat"]) for p in places),
+        "longitude": ",".join(str(p["lon"]) for p in places),
+        "daily": "precipitation_sum", "forecast_days": 7, "timezone": "Asia/Kolkata",
+    }
+    try:
+        # A single location is answered with an object, several with a list: normalise to a list.
+        raw = _get_json(FORECAST_URL, params, expect_list=len(places) > 1)
+        if isinstance(raw, dict):
+            raw = [raw]
+        if len(raw) != len(places):
+            # Without a one-to-one match we cannot safely attribute values to places.
+            raise ProviderError("Weather provider returned an unexpected number of locations")
+        rows = []
+        for place, item in zip(places, raw):
+            daily = item.get("daily") if isinstance(item.get("daily"), dict) else {}
+            sums = daily.get("precipitation_sum")
+            values = [v for v in (sums if isinstance(sums, list) else []) if isinstance(v, (int, float)) and not isinstance(v, bool)]
+            rows.append({
+                "place_id": place["id"], "place": place["name"], "lat": place["lat"], "lon": place["lon"],
+                # Missing values are unknown, never zero: no valid day means no total.
+                "total_mm": round(sum(values), 1) if values else None,
+                "max_daily_mm": round(max(values), 1) if values else None,
+                "valid_days": len(values),
+            })
+        payload = {
+            "district": district, "source": "Open-Meteo Forecast API", "source_url": "https://open-meteo.com/en/docs",
+            "places": rows,
+            "note": "7-day model forecast totals at approximate town coordinates; not official forecasts, rain-gauge readings or IMD warnings.",
+            "fetched_live": True,
+        }
+        fetched_at = _save_cache(key, payload)
         return {**payload, "cached": False, "stale": False, "retrieved_at": fetched_at}
     except ProviderError:
         if cached:

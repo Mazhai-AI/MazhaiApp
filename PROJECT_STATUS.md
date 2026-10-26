@@ -22,10 +22,16 @@ Updated: 2026-10-20
 - [x] `GET /api/weather/statewide` and a statewide-coloured district map (single multi-location upstream request).
 - [x] Skip link and `aria-current` navigation state.
 
+## Added: places inside a district
+- [x] Every district now has a list of towns / taluk headquarters (`backend/app/places.py`, ~230 places), shown as markers and a list when a district is selected in the weather explorer.
+- [x] `GET /api/districts/{id}/places`, `GET /api/weather/place` (forecast at a place's own coordinates, cached per place) and `GET /api/weather/district-places` (7-day totals for all places in a district, one upstream request).
+- [x] Selecting a place opens its current conditions and 7-day outlook; Back returns to the district.
+- [x] Fixed: Chennai's ward polygons stayed on the map after selecting another district.
+
 ## Explicitly not completed / limitations
 - IMD observation ingestion and official warning ingestion are not implemented.
 - No verified historical flood/incident dataset is connected.
-- District coordinates are representative points; district boundary polygons and true station locations are not included.
+- District coordinates are representative points; district/taluk boundary polygons and true station locations are not included. Place coordinates are hand-compiled approximate town centres and have not been verified against an official gazetteer.
 - No trained/calibrated local ML model, hindcast evaluation, or calibrated flood-risk model.
 - No email/push notifications or scheduled ingestion worker.
 - External CDN assets require network connectivity.
