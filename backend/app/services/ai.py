@@ -358,7 +358,6 @@ def _direct_answer(message, language, location=None, intent="general"):
     }
 
 
-def _summarize_forecast
 def _summarize_forecast(forecast):
     """Create compact, explicit forecast evidence and preserve unknown values as unknown."""
     daily = forecast.get("daily") if isinstance(forecast.get("daily"), list) else []
