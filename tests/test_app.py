@@ -257,7 +257,7 @@ class AiTests(unittest.TestCase):
         self.assertEqual(result["location"], "Chennai")
         self.assertTrue(result["historical_context_available"])
         sent_json = json.loads(self.sent["messages"][-1]["content"])
-        self.assertEqual(sent_json["evidence_location"], "Chennai")
+        self.assertEqual(sent_json["resolved_location"]["name"], "Chennai")
         self.assertIn("historical_rainfall_summary", [item["type"] for item in sent_json["evidence"]])
         self.assertIn("JSON object", self.sent["messages"][0]["content"])
 
@@ -1077,6 +1077,172 @@ class BugfixRegressionTests(unittest.TestCase):
     def test_ai_question_length_is_checked_after_trimming(self):
         response = self.client.post("/api/ai/ask", json={"question": "   a   "})
         self.assertEqual(response.status_code, 422)
+
+
+
+class AiEvidenceRoutingTests(unittest.TestCase):
+    """Assert the AI answer route and the exact evidence providers it calls."""
+
+    def setUp(self):
+        self._saved = (ai.get_forecast, ai.get_place_forecast, ai.get_history, ai.urlopen)
+        self._old_key = os.environ.get("MISTRAL_API_KEY")
+        os.environ["MISTRAL_API_KEY"] = "test-key"
+        self.requests = []
+
+        def model(req, timeout=None):
+            self.requests.append(json.loads(req.data.decode()))
+            content = {
+                "current_conditions_and_forecast": "Rain may occur tomorrow based on the available forecast.",
+                "historical_context": "Historical data was not retrieved for this forecast-only question.",
+                "what_to_watch_next": ["Check the next forecast update.", "Review official bulletins if conditions change."],
+                "recommended_actions": ["Carry an umbrella if travelling.", "Use updated local information."],
+                "confidence_and_limitations": "This is a model estimate and conditions may change.",
+            }
+            return FakeResp({"choices": [{"message": {"content": json.dumps(content)}}]})
+
+        ai.urlopen = model
+
+    def tearDown(self):
+        ai.get_forecast, ai.get_place_forecast, ai.get_history, ai.urlopen = self._saved
+        if self._old_key is None:
+            os.environ.pop("MISTRAL_API_KEY", None)
+        else:
+            os.environ["MISTRAL_API_KEY"] = self._old_key
+
+    @staticmethod
+    def _forecast():
+        from datetime import datetime, timedelta
+        today = datetime.now().date()
+        return {
+            "source": "Open-Meteo Forecast API", "retrieved_at": "test", "cached": False, "stale": False,
+            "current": {"temperature_c": 28},
+            "daily": [
+                {"date": (today + timedelta(days=1)).isoformat(), "precipitation_mm": 4.0,
+                 "precipitation_probability_pct": 60}
+            ],
+            "hourly": [],
+        }
+
+    @staticmethod
+    def _history():
+        from datetime import date, timedelta
+        yesterday = date.today() - timedelta(days=1)
+        return {
+            "source": "Open-Meteo Historical Weather API (reanalysis)",
+            "records": [{"date": yesterday.isoformat(), "precipitation_mm": 3.0}],
+            "stale": False, "retrieved_at": "test",
+        }
+
+    def test_mettur_uses_place_forecast_instead_of_selected_chennai(self):
+        place_calls, district_calls, history_calls = [], [], []
+
+        def place_forecast(district_id, place_id):
+            place_calls.append((district_id, place_id))
+            return self._forecast()
+
+        ai.get_place_forecast = place_forecast
+        ai.get_forecast = lambda district_id: district_calls.append(district_id) or self.fail("district forecast should not be used")
+        ai.get_history = lambda *args: history_calls.append(args) or self.fail("forecast-only request must not fetch history")
+
+        result = ai.ask_mistral("Will it rain in Mettur?", district_id="chennai")
+        self.assertTrue(result["available"])
+        self.assertEqual(result["location"], "Mettur")
+        self.assertEqual(place_calls, [("salem", "mettur")])
+        self.assertEqual(district_calls, [])
+        self.assertEqual(history_calls, [])
+        payload = json.loads(self.requests[0]["messages"][-1]["content"])
+        self.assertEqual(payload["resolved_location"]["name"], "Mettur")
+        self.assertIn("place_forecast_summary", [item["type"] for item in payload["evidence"]])
+
+    def test_bengaluru_never_falls_back_to_selected_chennai_or_fetches_weather(self):
+        ai.get_forecast = lambda *args: self.fail("unsupported location must not fetch district forecast")
+        ai.get_place_forecast = lambda *args: self.fail("unsupported location must not fetch place forecast")
+        ai.get_history = lambda *args: self.fail("unsupported location must not fetch history")
+
+        result = ai.ask_mistral("Will it rain in Bengaluru?", district_id="chennai")
+        self.assertTrue(result["available"])
+        self.assertIsNone(result["location"])
+        self.assertIn("Bengaluru", result["answer"])
+        self.assertIn("supported Tamil Nadu", result["answer"])
+        self.assertEqual(self.requests, [])
+
+    def test_rainfall_probability_definition_uses_no_weather_provider_or_model(self):
+        ai.get_forecast = lambda *args: self.fail("definition should not fetch forecast")
+        ai.get_place_forecast = lambda *args: self.fail("definition should not fetch place forecast")
+        ai.get_history = lambda *args: self.fail("definition should not fetch history")
+        ai.urlopen = lambda *args, **kwargs: self.fail("simple definition should be deterministic")
+
+        result = ai.ask_mistral("What does rainfall probability mean?", district_id="chennai")
+        self.assertTrue(result["available"])
+        self.assertEqual(result["intent"], "explanation")
+        self.assertIn("does not mean", result["answer"])
+        self.assertEqual(self.requests, [])
+
+    def test_forecast_only_uses_selected_salem_and_never_fetches_history(self):
+        forecast_calls = []
+        ai.get_forecast = lambda district_id: forecast_calls.append(district_id) or self._forecast()
+        ai.get_place_forecast = lambda *args: self.fail("district forecast expected")
+        ai.get_history = lambda *args: self.fail("forecast-only question must not fetch history")
+
+        result = ai.ask_mistral("Will it rain tomorrow?", district_id="salem")
+        self.assertEqual(forecast_calls, ["salem"])
+        self.assertEqual(result["location"], "Salem")
+        self.assertEqual(result["intent"], "forecast")
+        self.assertNotIn("historical_rainfall_summary", result["evidence_types"])
+        self.assertEqual(self.requests[0]["max_tokens"], 700)
+
+    def test_historical_question_fetches_only_its_narrow_range(self):
+        from datetime import date, timedelta
+        history_calls, forecast_calls = [], []
+        ai.get_forecast = lambda *args: forecast_calls.append(args) or self.fail("history-only request must not fetch forecast")
+        ai.get_place_forecast = lambda *args: self.fail("history-only request must not fetch town forecast")
+        ai.get_history = lambda district_id, start, end: history_calls.append((district_id, start, end)) or self._history()
+
+        result = ai.ask_mistral("How much rain fell in Salem yesterday?", district_id="chennai")
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        self.assertEqual(forecast_calls, [])
+        self.assertEqual(history_calls, [("salem", yesterday, yesterday)])
+        self.assertEqual(result["intent"], "history")
+        payload = json.loads(self.requests[0]["messages"][-1]["content"])
+        self.assertEqual(payload["historical_range"], {"start": yesterday, "end": yesterday})
+        self.assertEqual([item["type"] for item in payload["evidence"]], ["historical_rainfall_summary"])
+
+    def test_follow_up_keeps_last_user_named_town_over_dashboard_context(self):
+        place_calls = []
+        ai.get_place_forecast = lambda district_id, place_id: place_calls.append((district_id, place_id)) or self._forecast()
+        ai.get_forecast = lambda *args: self.fail("must not switch follow-up to dashboard district forecast")
+        ai.get_history = lambda *args: self.fail("forecast follow-up must not fetch history")
+        history = [
+            {"role": "user", "content": "Will it rain in Mettur?"},
+            {"role": "assistant", "content": "The previous answer mentioned Chennai, but is not evidence."},
+        ]
+
+        result = ai.ask_mistral("And what about tomorrow?", district_id="chennai", history=history)
+        self.assertEqual(place_calls, [("salem", "mettur")])
+        self.assertEqual(result["location"], "Mettur")
+        payload = json.loads(self.requests[0]["messages"][-1]["content"])
+        self.assertEqual(payload["resolved_location"]["name"], "Mettur")
+        self.assertEqual(payload["evidence"][0]["location"], "Mettur")
+
+    def test_follow_up_context_is_total_bounded_and_response_stays_concise(self):
+        ai.get_forecast = lambda district_id: self._forecast()
+        ai.get_place_forecast = lambda *args: self.fail("district context expected")
+        ai.get_history = lambda *args: self.fail("forecast follow-up must not fetch history")
+        history = [
+            {"role": "user", "content": "x" * 1200},
+            {"role": "assistant", "content": "old assistant answer " * 100},
+            {"role": "user", "content": "Will it rain tomorrow?"},
+        ]
+
+        result = ai.ask_mistral("And what about tomorrow?", district_id="salem", history=history)
+        sent_messages = self.requests[0]["messages"]
+        prior_messages = [m for m in sent_messages[1:-1] if m["role"] in ("user", "assistant")]
+        self.assertLessEqual(sum(len(m["content"]) for m in prior_messages), ai.MAX_HISTORY_CHARS)
+        self.assertEqual(self.requests[0]["max_tokens"], 700)
+        self.assertEqual(result["intent"], "forecast")
+        self.assertLess(len(result["answer"]), 900)
+        current_payload = json.loads(sent_messages[-1]["content"])
+        self.assertNotIn("old assistant answer", json.dumps(current_payload))
 
 
 if __name__ == "__main__":
