@@ -312,7 +312,17 @@ async function sendQuestion(question){
   const bubble=placeholder.querySelector(".chat-bubble");
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),70000);
   try{
-    const body={question:text,district_id:state.districtId,language:getLanguage(),history:state.chatHistory.slice(-8).map(turn=>({role:turn.role,content:String(turn.content??"").slice(0,1400)}))};
+    let historyBudget=1600;
+    const compactHistory=[];
+    for(const turn of state.chatHistory.slice(-8).reverse()){
+      if(historyBudget<=0)break;
+      const content=String(turn.content??"").trim();
+      if(!content||!(turn.role==="user"||turn.role==="assistant"))continue;
+      const kept=content.slice(0,historyBudget);
+      compactHistory.push({role:turn.role,content:kept});
+      historyBudget-=kept.length;
+    }
+    const body={question:text,district_id:state.districtId,language:getLanguage(),history:compactHistory.reverse()};
     const start=$("#history-start").value,end=$("#history-end").value;if(start&&end&&end>=start){body.start=start;body.end=end}
     const result=await api("/ai/ask",{method:"POST",body:JSON.stringify(body),signal:controller.signal});
     const reply=result.available?result.answer:result.message;
