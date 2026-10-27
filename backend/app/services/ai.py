@@ -968,7 +968,7 @@ def ask_mistral(question, district_id=None, start=None, end=None, history=None, 
             message = (
                 f"“{name}” என்ற இடம் ஒன்றுக்கு மேல் பொருள் தருகிறது. எந்த மாவட்டத்தில் உள்ள இடம் என்று குறிப்பிடவும்: {places_text}."
                 if language == "ta" else
-                f“I found more than one supported place named {name}. Which district do you mean: {places_text}?”
+                f"I found more than one supported place named {name}. Which district do you mean: {places_text}?"
             )
         else:
             name = location.get("name") or "that location"
