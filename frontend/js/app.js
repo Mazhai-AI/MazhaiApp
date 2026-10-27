@@ -312,12 +312,12 @@ async function sendQuestion(question){
   const bubble=placeholder.querySelector(".chat-bubble");
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),70000);
   try{
-    const body={question:text,district_id:state.districtId,language:getLanguage(),history:state.chatHistory.slice(-8).map(turn=>({role:turn.role,content:String(turn.content??"").slice(0,1400)}))};
+    const body={question:text,district_id:state.districtId,language:getLanguage(),history:state.chatHistory.slice(-6).map(turn=>({role:turn.role,content:String(turn.content??"").slice(-500)}))};
     const start=$("#history-start").value,end=$("#history-end").value;if(start&&end&&end>=start){body.start=start;body.end=end}
     const result=await api("/ai/ask",{method:"POST",body:JSON.stringify(body),signal:controller.signal});
     const reply=result.available?result.answer:result.message;
     renderAssistantReply(bubble,result,typeof reply==="string"&&reply?reply:"The assistant returned no answer.");
-    if(result.available){state.chatHistory.push({role:"user",content:text.slice(0,1400)},{role:"assistant",content:String(reply??"").slice(0,1400)});state.chatHistory=state.chatHistory.slice(-12)}
+    if(result.available){state.chatHistory.push({role:"user",content:text.slice(0,500)},{role:"assistant",content:String(reply??"").slice(0,500)});state.chatHistory=state.chatHistory.slice(-6)}
     $("#ai-status").textContent=result.available?`Connected · ${result.model}`:"Mistral unavailable or not configured";
   }catch(e){
     const language=getLanguage();
