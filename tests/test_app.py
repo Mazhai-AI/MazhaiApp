@@ -1207,6 +1207,23 @@ class AiEvidenceRoutingTests(unittest.TestCase):
         self.assertEqual(payload["historical_range"], {"start": yesterday, "end": yesterday})
         self.assertEqual([item["type"] for item in payload["evidence"]], ["historical_rainfall_summary"])
 
+    def test_follow_up_keeps_last_user_named_town_over_dashboard_context(self):
+        place_calls = []
+        ai.get_place_forecast = lambda district_id, place_id: place_calls.append((district_id, place_id)) or self._forecast()
+        ai.get_forecast = lambda *args: self.fail("must not switch follow-up to dashboard district forecast")
+        ai.get_history = lambda *args: self.fail("forecast follow-up must not fetch history")
+        history = [
+            {"role": "user", "content": "Will it rain in Mettur?"},
+            {"role": "assistant", "content": "The previous answer mentioned Chennai, but is not evidence."},
+        ]
+
+        result = ai.ask_mistral("And what about tomorrow?", district_id="chennai", history=history)
+        self.assertEqual(place_calls, [("salem", "mettur")])
+        self.assertEqual(result["location"], "Mettur")
+        payload = json.loads(self.requests[0]["messages"][-1]["content"])
+        self.assertEqual(payload["resolved_location"]["name"], "Mettur")
+        self.assertEqual(payload["evidence"][0]["location"], "Mettur")
+
     def test_follow_up_context_is_total_bounded_and_response_stays_concise(self):
         ai.get_forecast = lambda district_id: self._forecast()
         ai.get_place_forecast = lambda *args: self.fail("district context expected")
