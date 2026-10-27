@@ -240,7 +240,7 @@ def _explicit_location_name(question):
     for name in _UNSUPPORTED_LOCATION_NAMES:
         pattern = re.escape(name)
         if not any(ord(ch) > 127 for ch in name):
-            pattern = r"(?<![\\w])" + pattern + r"(?![\\w])"
+            pattern = r"(?<![\w])" + pattern + r"(?![\w])"
         found = re.search(pattern, text, re.IGNORECASE)
         if found:
             return found.group(0)
@@ -285,7 +285,7 @@ def _resolve_location(question, district_id=None):
     for unsupported in _UNSUPPORTED_LOCATION_NAMES:
         pattern = re.escape(unsupported)
         if not any(ord(ch) > 127 for ch in unsupported):
-            pattern = r"(?<![\\w])" + pattern + r"(?![\\w])"
+            pattern = r"(?<![\w])" + pattern + r"(?![\w])"
         found = re.search(pattern, text, re.IGNORECASE)
         if found:
             return {"status": "unsupported", "kind": "unknown", "name": found.group(0)}
