@@ -915,9 +915,9 @@ def _build_system_prompt(now_ist, language="en", full_report=True):
     common = (
         language_instruction + " "
         f"Today is {now_ist:%A, %d %B %Y} in India Standard Time (IST). "
-        "You are Mazhai AI, a Tamil Nadu rainfall assistant. Answer the latest question directly. Use only the current supplied evidence for weather facts; history may resolve a follow-up but prior assistant messages are never evidence. "
-        "Never silently switch locations. Forecasts are model/grid estimates at representative district or town-centre points; historical values are district-reference-point reanalysis and must never be described as town-level observations. "
-        "Keep missing values unknown, mention stale data, distinguish forecasts from historical reanalysis, and never invent incidents or official warnings. The app's rainfall-attention bands are preliminary and not official IMD alerts or a flood-risk model. Recommend checking official IMD/local authority updates for safety decisions."
+        "The latest user message determines the task. Use chat history only to understand conversational context; never treat a previous assistant answer as evidence. Answer the latest question directly and do not repeat a full general report for a narrow follow-up or restate every number. "
+        "Never silently switch locations. Forecasts are model/grid estimates at representative district or town-centre points; historical values are district-reference-point reanalysis and must never be described as town-level observations. District reference-point data cannot establish a specific ward or street. "
+        "Keep missing values unknown, mention stale data, distinguish forecasts from historical reanalysis, and never invent rainfall measurements, incidents, or official warnings. The app's rainfall-attention bands are preliminary and not official IMD alerts or a flood-risk model. Recommend checking official IMD/local authority updates for safety decisions. Keep field names in English."
     )
     if not full_report:
         return common + (
@@ -1046,6 +1046,7 @@ def ask_mistral(question, district_id=None, start=None, end=None, history=None, 
     messages.append({"role": "user", "content": json.dumps({
         "question": question,
         "resolved_location": location_name,
+        "evidence_location": location_name,
         "intent": intent,
         "requested_historical_range": {"start": history_start, "end": history_end} if needs_history else None,
         "evidence": evidence,
@@ -1078,6 +1079,22 @@ def ask_mistral(question, district_id=None, start=None, end=None, history=None, 
                        if language == "ta" else
                        "Mistral returned an empty answer. Please try rephrasing your question.")
             return {"available": False, "language": language, "message": message}
+
+        if not full_report:
+            # Be tolerant of models that still return the established five-field schema.
+            # Validate and render it through the existing structured path instead of rejecting it
+            # as an invalid one-field concise answer.
+            parsed_initial = _parse_json_object(raw_answer)
+            structured_keys = (
+                "current_conditions_and_forecast", "historical_context",
+                "what_to_watch_next", "recommended_actions", "confidence_and_limitations",
+            )
+            if (
+                isinstance(parsed_initial, dict) and any(key in parsed_initial for key in structured_keys)
+            ) or any(key in raw_answer for key in structured_keys):
+                full_report = True
+                body["max_tokens"] = 1200
+                messages[0]["content"] = _build_system_prompt(now_ist, language, full_report=True)
 
         if not full_report:
             parsed_concise = _parse_json_object(raw_answer)
