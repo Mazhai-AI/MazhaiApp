@@ -202,7 +202,10 @@ def _classify_intent(question):
         return "explanation"
     if ("மழை வாய்ப்பு" in text or "மழை பெய்யும் வாய்ப்பு" in text) and ("என்றால் என்ன" in text or "விளக்க" in text):
         return "explanation"
-    if any(term in text for term in ("compared to", "compare", "comparison", "versus", " vs ", "against last", "forecast and history")):
+    if any(term in text for term in ("compared to", "compare", "comparison", "versus", " vs ", "against last", "forecast and history")) or re.search(
+        r"\\b(?:more|less|higher|lower|wetter|drier|different|similar)\\b.{0,40}\\b(?:last|past|previous|historical|history|week|month|year)\\b",
+        text,
+    ):
         return "comparison"
     if any(term in text for term in ("rainfall alert", "weather alert", "risk assessment", "rainfall assessment", "assess the rainfall", "flood risk", "should i worry", "பாதிப்பு மதிப்பீடு", "எச்சரிக்கை")):
         return "assessment"
@@ -236,6 +239,8 @@ def _explicit_location_name(question):
     text = str(question or "")
     for name in _UNSUPPORTED_LOCATION_NAMES:
         pattern = re.escape(name)
+        if not any(ord(ch) > 127 for ch in name):
+            pattern = r"(?<![\\w])" + pattern + r"(?![\\w])"
         found = re.search(pattern, text, re.IGNORECASE)
         if found:
             return found.group(0)
@@ -260,7 +265,7 @@ def _explicit_location_name(question):
                 return candidate
     # Also avoid falling back for common "Bengaluru weather" style prompts without a preposition.
     leading = re.match(
-        r"\s*([A-Z][A-Za-z.'’-]*(?:\s+[A-Z][A-Za-z.'’-]*){0,2})\s+(?:weather|forecast|rainfall|rain)\b",
+        r"\\s*([A-Za-z][A-Za-z.'’-]*)\\s+(?:weather|forecast|rainfall|rain)\\b",
         text,
         re.IGNORECASE,
     )
@@ -278,7 +283,10 @@ def _resolve_location(question, district_id=None):
 
     text = str(question or "")
     for unsupported in _UNSUPPORTED_LOCATION_NAMES:
-        found = re.search(re.escape(unsupported), text, re.IGNORECASE)
+        pattern = re.escape(unsupported)
+        if not any(ord(ch) > 127 for ch in unsupported):
+            pattern = r"(?<![\\w])" + pattern + r"(?![\\w])"
+        found = re.search(pattern, text, re.IGNORECASE)
         if found:
             return {"status": "unsupported", "kind": "unknown", "name": found.group(0)}
     matches = []
@@ -410,8 +418,9 @@ def _summarize_history(history, requested_start, requested_end, today):
              if isinstance(row, dict) and isinstance(row.get("date"), str)
              and _is_number(row.get("precipitation_mm"))]
     max_record = max(valid, key=lambda pair: pair[1]) if valid else (None, None)
-    last_week_start = (today - timedelta(days=6)).isoformat()
-    last_week = [(day, value) for day, value in valid if last_week_start <= day <= today.isoformat()]
+    last_week_start = (today - timedelta(days=7)).isoformat()
+    last_completed_day = (today - timedelta(days=1)).isoformat()
+    last_week = [(day, value) for day, value in valid if last_week_start <= day <= last_completed_day]
     recent_max = max(last_week, key=lambda pair: pair[1]) if last_week else (None, None)
     return {
         "source": history.get("source"),
