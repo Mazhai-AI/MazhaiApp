@@ -531,6 +531,117 @@ class AiTests(unittest.TestCase):
         self.assertEqual(ai._resolve_district("Rain outlook for Chennai?", "coimbatore")["id"], "chennai")
 
 
+
+class AiRoutingTests(unittest.TestCase):
+    def setUp(self):
+        self._saved = (ai.get_forecast, ai.get_place_forecast, ai.get_history, ai.urlopen)
+        os.environ["MISTRAL_API_KEY"] = "test-key"
+        self.calls = []
+        ai.get_forecast = self._forecast
+        ai.get_place_forecast = self._place_forecast
+        ai.get_history = self._history
+        ai.urlopen = self._model
+
+    def tearDown(self):
+        ai.get_forecast, ai.get_place_forecast, ai.get_history, ai.urlopen = self._saved
+        os.environ.pop("MISTRAL_API_KEY", None)
+
+    def _forecast_data(self, name):
+        from datetime import date, timedelta
+        today = date.today()
+        return {
+            "source": "test forecast", "retrieved_at": "2026-10-27T00:00:00+00:00",
+            "cached": False, "stale": False, "current": {"temperature_c": 28},
+            "daily": [
+                {"date": (today + timedelta(days=i)).isoformat(), "precipitation_mm": 1.0,
+                 "precipitation_probability_pct": 45}
+                for i in range(7)
+            ],
+            "hourly": [
+                {"time": str(i), "precipitation_mm": 0.1, "precipitation_probability_pct": 45}
+                for i in range(48)
+            ],
+        }
+
+    def _forecast(self, district_id):
+        self.calls.append(("forecast", district_id))
+        return self._forecast_data(district_id)
+
+    def _place_forecast(self, district_id, place_id):
+        self.calls.append(("place_forecast", district_id, place_id))
+        return {**self._forecast_data(place_id), "place": {"id": place_id, "name": place_id.title()}}
+
+    def _history(self, district_id, start, end):
+        self.calls.append(("history", district_id, start, end))
+        return {
+            "source": "test historical reanalysis", "retrieved_at": "2026-10-27T00:00:00+00:00",
+            "stale": False, "records": [{"date": start, "precipitation_mm": 2.0}],
+        }
+
+    def _model(self, req, timeout=None):
+        payload = json.loads(req.data.decode())
+        self.sent = payload
+        return FakeResp({"choices": [{"message": {"content": json.dumps({"answer": "Rain is possible."})}}]})
+
+    def test_mettur_uses_place_forecast_not_selected_chennai(self):
+        result = ai.ask_mistral("Will it rain in Mettur?", district_id="chennai")
+        self.assertIn(("place_forecast", "salem", "mettur"), self.calls)
+        self.assertFalse(any(call[0] == "forecast" or call[0] == "history" for call in self.calls))
+        self.assertEqual(result["location"], "Mettur")
+        request = json.loads(self.sent["messages"][-1]["content"])
+        self.assertEqual(request["resolved_location"], "Mettur")
+        self.assertEqual([e["location"] for e in request["evidence"] if e["type"] == "provider_forecast_summary"], ["Mettur"])
+
+    def test_bengaluru_does_not_retrieve_or_return_dashboard_weather(self):
+        result = ai.ask_mistral("Will it rain in Bengaluru?", district_id="chennai")
+        self.assertEqual(self.calls, [])
+        self.assertIsNone(result["location"])
+        self.assertIn("Bengaluru", result["answer"])
+        self.assertIn("outside the current coverage", result["answer"])
+
+    def test_rainfall_probability_explanation_does_not_retrieve_weather(self):
+        result = ai.ask_mistral("What does rainfall probability mean?", district_id="chennai")
+        self.assertEqual(self.calls, [])
+        self.assertEqual(result["evidence_types"], [])
+        self.assertIsNone(result["location"])
+        self.assertLess(self.sent["max_tokens"], 500)
+
+    def test_tomorrow_uses_selected_salem_forecast_without_history(self):
+        result = ai.ask_mistral("Will it rain tomorrow?", district_id="salem")
+        self.assertIn(("forecast", "salem"), self.calls)
+        self.assertFalse(any(call[0] == "history" for call in self.calls))
+        self.assertEqual(result["location"], "Salem")
+
+    def test_history_question_fetches_history_only_for_requested_range(self):
+        from datetime import date
+        result = ai.ask_mistral("How much rain fell last week?", district_id="salem")
+        self.assertEqual([call[0] for call in self.calls], ["history"])
+        self.assertEqual(self.calls[0][1], "salem")
+        self.assertEqual((self.calls[0][2], self.calls[0][3]), ai._history_range("last week", None, None, date.today(), "history"))
+        self.assertIn("historical_rainfall_summary", result["evidence_types"])
+
+    def test_follow_up_reuses_user_named_town_and_returns_concise_answer(self):
+        result = ai.ask_mistral(
+            "Will it rain tomorrow?", district_id="chennai",
+            history=[{"role": "user", "content": "Will it rain in Mettur?"},
+                     {"role": "assistant", "content": "Previous answer mentioning Chennai."}],
+        )
+        self.assertIn(("place_forecast", "salem", "mettur"), self.calls)
+        self.assertNotIn(("forecast", "chennai"), self.calls)
+        self.assertNotIn("structured_answer", result)
+        self.assertEqual(result["answer"], "Rain is possible.")
+        self.assertLess(self.sent["max_tokens"], 500)
+
+    def test_history_budget_caps_all_turns_together(self):
+        cleaned = ai._clean_history([
+            {"role": "user", "content": "a" * 700},
+            {"role": "assistant", "content": "b" * 700},
+            {"role": "user", "content": "c" * 700},
+        ])
+        self.assertLessEqual(sum(len(turn["content"]) for turn in cleaned), ai.MAX_HISTORY_CHARS)
+        self.assertEqual(cleaned[-1]["content"], "c" * 700)
+
+
 def put_cache(key, payload, age_seconds):
     """Insert an api_cache row that looks like it was fetched age_seconds ago."""
     from datetime import datetime, timedelta, timezone
