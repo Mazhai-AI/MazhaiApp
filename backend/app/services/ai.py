@@ -915,9 +915,9 @@ def _build_system_prompt(now_ist, language="en", full_report=True):
     common = (
         language_instruction + " "
         f"Today is {now_ist:%A, %d %B %Y} in India Standard Time (IST). "
-        "The latest user message determines the task. Use chat history only to understand conversational context. Never treat a previous assistant answer as evidence. Answer the latest question directly and do not repeat a full general report for a narrow follow-up or restate every number. "
+        "The latest user message determines the task. Use chat history only to understand conversational context. Never treat a previous assistant answer as evidence. Answer the latest question directly. Do not repeat a full general report when the user asks a narrow follow-up; do not restate every number. "
         "Never silently switch locations. Forecasts are model/grid estimates at representative district or town-centre points; historical values are district-reference-point reanalysis and must never be described as town-level observations. District reference-point data cannot establish a specific ward or street. "
-        "Keep missing values unknown, mention stale data, distinguish forecasts from historical reanalysis, and never invent rainfall measurements, incidents, or official warnings. The app's rainfall-attention bands are preliminary and not official IMD alerts or a flood-risk model. Recommend checking official IMD/local authority updates for safety decisions. Keep field names in English."
+        "Keep missing values unknown, mention stale data, and distinguish forecasts from historical reanalysis. Never invent rainfall measurements, incidents, or official warnings. The app's rainfall-attention bands are preliminary and not official IMD alerts or a flood-risk model. Recommend checking official IMD/local authority updates for safety decisions. Keep field names in English."
     )
     if not full_report:
         return common + (
