@@ -257,7 +257,7 @@ class AiTests(unittest.TestCase):
         self.assertEqual(result["location"], "Chennai")
         self.assertTrue(result["historical_context_available"])
         sent_json = json.loads(self.sent["messages"][-1]["content"])
-        self.assertEqual(sent_json["evidence_location"], "Chennai")
+        self.assertEqual(sent_json["resolved_location"]["name"], "Chennai")
         self.assertIn("historical_rainfall_summary", [item["type"] for item in sent_json["evidence"]])
         self.assertIn("JSON object", self.sent["messages"][0]["content"])
 
