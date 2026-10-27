@@ -215,7 +215,7 @@ def _classify_intent(question):
         return "history"
     if any(term in text for term in (
         "forecast", "will it rain", "will rain", "chance of rain", "rain tomorrow",
-        "rain today", "rain tonight", "weather tomorrow", "weather today", "next 24",
+        "rain today", "rain tonight", "weather tomorrow", "weather today", "tomorrow", "today", "tonight", "next 24",
         "next 48", "next few days", "rain probability", "precipitation", "umbrella",
         "மழை பெய்யுமா", "நாளை மழை", "இன்று மழை", "வானிலை", "முன்னறிவிப்பு",
     )):
@@ -278,30 +278,34 @@ def _resolve_location(question, district_id=None):
     matches = []
     for owner_id, places in PLACES_BY_DISTRICT.items():
         for place in places:
-            variants = {place.get("name", ""), place.get("id", "").replace("-", " ")}
             name = place.get("name", "")
-            # Parenthetical alternate names such as Ooty remain searchable on their own.
-            variants.update(re.findall(r"\(([^)]+)\)", name))
-            variants.discard("")
-            for variant in variants:
+            variants = {
+                name,
+                place.get("id", "").replace("-", " "),
+                *re.findall(r"\(([^)]+)\)", name),
+                re.sub(r"\s*\([^)]*\)", "", name).strip(),
+            }
+            for variant in variants - {""}:
                 if any(ord(ch) > 127 for ch in variant):
                     found = re.search(re.escape(variant), text, re.IGNORECASE)
                 else:
                     found = re.search(r"(?<![\w])" + re.escape(variant) + r"(?![\w])", text, re.IGNORECASE)
                 if found:
-                    matches.append((len(variant), place, owner_id))
-                    break
+                    matches.append((len(variant), variant, place, owner_id))
     if matches:
         longest = max(item[0] for item in matches)
         unique = {}
-        for _, place, owner_id in matches:
-            if len(next((v for v in (place.get("name", ""), place.get("id", "").replace("-", " "), *re.findall(r"\(([^)]+)\)", place.get("name", ""))) if v and re.search(re.escape(v), text, re.IGNORECASE)), "")) == longest:
-                unique[(owner_id, place["id"])] = (place, owner_id)
-        # If two different towns share the same requested name, make the user disambiguate.
+        for size, variant, place, owner_id in matches:
+            if size == longest:
+                unique[(owner_id, place["id"])] = (place, owner_id, variant)
         if len(unique) > 1:
-            choices = sorted({next(d["name"] for d in DISTRICTS if d["id"] == owner_id) for _, owner_id in unique.values()})
-            return {"status": "ambiguous", "kind": "place", "name": next(iter(unique.values()))[0]["name"], "choices": choices}
-        place, owner_id = next(iter(unique.values()))
+            names = {entry[2].casefold() for entry in unique.values()}
+            # Only ask for clarification when the same town label maps to different districts.
+            if len(names) == 1:
+                choices = sorted({next(d["name"] for d in DISTRICTS if d["id"] == owner_id)
+                                  for _, owner_id, _ in unique.values()})
+                return {"status": "ambiguous", "kind": "place", "name": next(iter(names)), "choices": choices}
+        place, owner_id, _ = next(iter(unique.values()))
         owner = next((item for item in DISTRICTS if item["id"] == owner_id), None)
         return {"status": "resolved", "kind": "place", "district": owner, "place": place,
                 "name": place["name"], "scope": "town-point model/grid forecast"}
@@ -907,7 +911,7 @@ def _build_system_prompt(now_ist, language="en"):
         '"what_to_watch_next": array of 2-4 strings, "recommended_actions": array of 2-4 strings, '
         '"confidence_and_limitations": string}. '
         "Keep simple answers brief; use a full report only when requested or genuinely needed. "
-        "Say what evidence supports a conclusion and its main uncertainty. Do not restate every number. "
+        "Say what evidence supports a conclusion and its main uncertainty, and do not restate every number. "
         "Escape JSON strings correctly and return no Markdown fences or extra keys."
     )
 
