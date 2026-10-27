@@ -236,8 +236,9 @@ def _explicit_location_name(question):
     text = str(question or "")
     for name in _UNSUPPORTED_LOCATION_NAMES:
         pattern = re.escape(name)
-        if re.search(pattern, text, re.IGNORECASE):
-            return name
+        found = re.search(pattern, text, re.IGNORECASE)
+        if found:
+            return found.group(0)
     pattern = re.compile(
         r"\b(?:in|at|near|around|for|from)\s+([A-Za-z][A-Za-z.'’-]*(?:\s+[A-Za-z][A-Za-z.'’-]*){0,2})",
         re.IGNORECASE,
@@ -261,6 +262,7 @@ def _explicit_location_name(question):
     leading = re.match(
         r"\s*([A-Z][A-Za-z.'’-]*(?:\s+[A-Z][A-Za-z.'’-]*){0,2})\s+(?:weather|forecast|rainfall|rain)\b",
         text,
+        re.IGNORECASE,
     )
     if leading:
         return leading.group(1)
@@ -275,6 +277,10 @@ def _resolve_location(question, district_id=None):
                 "name": district["name"], "scope": "district reference-point forecast"}
 
     text = str(question or "")
+    for unsupported in _UNSUPPORTED_LOCATION_NAMES:
+        found = re.search(re.escape(unsupported), text, re.IGNORECASE)
+        if found:
+            return {"status": "unsupported", "kind": "unknown", "name": found.group(0)}
     matches = []
     for owner_id, places in PLACES_BY_DISTRICT.items():
         for place in places:
@@ -929,9 +935,22 @@ def ask_mistral(question, district_id=None, start=None, end=None, history=None, 
         )
         return _direct_answer(message, language, intent="explanation")
 
-    location = _resolve_location(question, district_id) if intent in ("forecast", "history", "assessment", "comparison") else {
+    weather_intent = intent in ("forecast", "history", "assessment", "comparison")
+    location = _resolve_location(question, None) if weather_intent else {
         "status": "missing", "kind": None, "district": None, "place": None, "name": None, "scope": None
     }
+    # Short follow-ups inherit the most recent explicit user location, never an assistant's prior answer.
+    is_follow_up = bool(re.match(r"\s*(?:and\b|what about\b|how about\b|there\b|same place\b|tomorrow\b|also\b|அங்கு|அங்கே|அதே இடம்)", str(question or ""), re.IGNORECASE))
+    if weather_intent and location["status"] == "missing" and is_follow_up:
+        for turn in reversed((history or [])[-8:]):
+            if not isinstance(turn, dict) or turn.get("role") != "user" or not isinstance(turn.get("content"), str):
+                continue
+            previous_location = _resolve_location(turn["content"], None)
+            if previous_location["status"] in ("resolved", "unsupported", "ambiguous"):
+                location = previous_location
+                break
+    if weather_intent and location["status"] == "missing":
+        location = _resolve_location(question, district_id)
     if location["status"] in ("unsupported", "ambiguous"):
         if location["status"] == "ambiguous":
             name = location.get("name") or "that town"
@@ -1006,14 +1025,6 @@ def ask_mistral(question, district_id=None, start=None, end=None, history=None, 
             alert_history_summary = history_summary
         except (ValueError, ProviderError) as exc:
             evidence.append({"type": "history_unavailable", "location": chosen_district["name"], "detail": str(exc)})
-
-    if location.get("status") != "resolved" and intent in ("forecast", "history", "assessment", "comparison"):
-        no_location = (
-            "வானிலை கேள்விக்கு ஆதரிக்கப்படும் மாவட்டம் அல்லது நகரம் தேவை. பட்டியலிலிருந்து ஒரு இடத்தைத் தேர்ந்தெடுக்கவும்."
-            if language == "ta" else
-            "A supported district or town is needed for this weather question. Select a location from the app's supported list."
-        )
-        return _direct_answer(no_location, language, intent=intent)
 
     alert = None
     if forecast_summary and intent in ("assessment", "comparison"):
