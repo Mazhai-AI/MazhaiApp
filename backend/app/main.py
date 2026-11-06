@@ -32,7 +32,6 @@ log = logging.getLogger("mazhai.main")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    keep_alive_stop = start_keep_alive()
     init_db()
     try:
         removed = prune_cache(int(os.getenv("CACHE_RETENTION_DAYS", "30")))
@@ -40,6 +39,7 @@ async def lifespan(app: FastAPI):
             log.info("Pruned %d expired api_cache rows", removed)
     except Exception:  # housekeeping must never stop the app from starting
         log.exception("api_cache pruning failed")
+    keep_alive_stop = start_keep_alive()
     try:
         yield
     finally:
