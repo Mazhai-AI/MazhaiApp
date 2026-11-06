@@ -25,6 +25,7 @@ from .places import places_for_district  # noqa: E402
 from .database.db import init_db, prune_cache  # noqa: E402
 from .services.weather import get_forecast, get_place_forecast, get_district_places_forecast, get_history, get_statewide_forecast, get_source_status, ProviderError  # noqa: E402
 from .services.ai import ask_mistral  # noqa: E402
+from .keep_alive import start_keep_alive  # noqa: E402
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 log = logging.getLogger("mazhai.main")
@@ -38,7 +39,12 @@ async def lifespan(app: FastAPI):
             log.info("Pruned %d expired api_cache rows", removed)
     except Exception:  # housekeeping must never stop the app from starting
         log.exception("api_cache pruning failed")
-    yield
+    keep_alive_stop = start_keep_alive()
+    try:
+        yield
+    finally:
+        if keep_alive_stop is not None:
+            keep_alive_stop.set()
 
 app = FastAPI(title="Mazhai AI API", version="1.0.0", description="Tamil Nadu rainfall intelligence API", lifespan=lifespan)
 origins = [x.strip() for x in os.getenv("CORS_ORIGINS", "http://127.0.0.1:8001,http://localhost:8001").split(",") if x.strip()]
